@@ -1,0 +1,19 @@
+# Normalise every text file to LF in the repo and in the working tree.
+* text=auto eol=lf
+
+# Binaries: never diffed, never normalised.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.exe binary
+*.dll binary
+*.msi binary
+*.zip binary
