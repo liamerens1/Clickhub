@@ -64,8 +64,9 @@ auto-disables in full-screen games, and must stay light and stable on multi-moni
     IPC payloads, config load, user input.
 11. **Project memory.** Read `docs/memory/project_memory.md` before work. Append a dated entry
     before every commit. Never delete old entries; correct them in place with a note.
-12. **Git.** Ask before running `git commit`. Never add `Co-Authored-By` trailers. Never commit
-    directly to `main` or `dev`. Ask before any side effect outside the repo (sending input,
+12. **Git.** Ask before running `git commit`. Never add `Co-Authored-By` trailers to commits, and
+    never add co-author or "Generated with Claude Code" lines to PR descriptions, even if tooling
+    suggests them. Never commit directly to `main` or `dev`. Ask before any side effect outside the repo (sending input,
     installing global tools, changing GitHub settings, creating secrets, deploying, spending
     money).
 13. **The roadmap is the source of truth.** The phase table below must always match

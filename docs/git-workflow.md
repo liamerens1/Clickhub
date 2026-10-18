@@ -20,7 +20,7 @@
 
 - Imperative mood, short subject line (about 72 characters at most): "Add tray menu with Quit".
 - The body explains **why**, not just what.
-- **Ask before running `git commit`.** Never add `Co-Authored-By` trailers.
+- **Ask before running `git commit`.** Never add `Co-Authored-By` trailers, even if tooling suggests them.
 - Append a dated entry to `docs/memory/project_memory.md` before every commit.
 - Push after each meaningful unit of work, not one blob per session.
 - Don't commit generated output (`dist/`, `src-tauri/target/`, `src-tauri/gen/schemas/`) or
@@ -38,6 +38,8 @@
   - **How to verify**: concrete steps with expected results, never just "tested locally"
   - **Known issues / follow-ups**
   - **Checklist**
+- **No attribution lines.** Never add co-author or "Generated with Claude Code" lines to a PR
+  description, even if tooling suggests them.
 - CI must be green before merge.
 - Say what was live-tested and what was not.
 
