@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the settings window. Grant only what a phase needs.",
+  "windows": ["settings"],
+  "permissions": ["core:default"]
+}
