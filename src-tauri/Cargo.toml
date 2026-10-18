@@ -1,0 +1,50 @@
+[package]
+name = "clickhub"
+version = "0.0.0"
+description = "ClickHub: a configurable radial control center for Windows"
+authors = ["Liam Erens"]
+edition = "2024"
+rust-version = "1.97"
+publish = false
+
+[lib]
+# The binary in main.rs is a thin shim; everything lives in the library so
+# integration tests in tests/ can reach it.
+name = "clickhub_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.3", features = [] }
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+tauri = { version = "=2.12.4", features = ["tray-icon"] }
+tauri-plugin-single-instance = "=2.5.4"
+thiserror = "=2.0.21"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+
+[lints.rust]
+# Only hook/ and platform/ may opt back in with #![allow(unsafe_code)].
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+# No unwrap/expect outside tests (see clippy.toml) and commented startup invariants.
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
