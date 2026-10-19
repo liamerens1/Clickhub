@@ -38,7 +38,9 @@ set to another scale temporarily.
 
 ## Phase 1 — Trigger
 
-**Status:** In progress (branch `feat/trigger/1`; spike on `spike/overlay/1`)
+**Status:** Done (2026-10-19, PR #3; release PR #4 to `main` as `v0.1.0`). Carried into Phase 2
+as explicit checks: fail-open with `swallow: true` live, presses ignored while paused, the
+keyboard trigger, and a 1-hour run.
 
 **Goal:** a low-level mouse/keyboard hook on its own thread, a trigger read from the config file
 (hand-edited for now), optional swallowing of the trigger click, a working Pause, and the overlay
@@ -111,19 +113,39 @@ settings).
 
 ## Phase 2 — Ring
 
-**Status:** Not started
+**Status:** In progress (branch `feat/ring/2`)
 
-**Goal:** the overlay at the cursor with static actions read from `config.json`, point-and-click
-selection, high-contrast default theme, and basic full-screen auto-disable.
+**Goal:** the ring at the cursor with static actions read from `config.json`, tap or hold
+interaction, the approved spoke design, and basic full-screen auto-disable.
+
+**Design (approved 2026-10-19 from interactive mockups):** no backgrounds or borders. Plain 1 px
+lines radiate from a wide empty centre (~72 px) to plain-text labels; the centre shows the
+focused action's name and shortcut as plain text. Text and lines follow Windows light/dark.
+Direction from the centre picks the item. Focus is a graded, continuous zoom: the aimed item's
+line grows ~16% and its label zooms to ~1.3x, neighbours zoom less, others stay at rest. Open is
+a ~300 ms staged bloom (lines grow outward with a small stagger, each label pops in with a slight
+overshoot as its line arrives); close ~100 ms. Built as HTML layers animated by one
+`requestAnimationFrame` loop with text pre-sized at its zoomed size (the SVG + CSS-transition
+mockup lagged).
+
+**Interaction:** tap the trigger and the ring stays open: click to fire the aimed item, click in
+the centre, right-click or Esc to close. Hold the trigger, aim, and release to fire; releasing in
+the centre cancels. Swallowing is on by default from this phase.
 
 **Done when:**
 
 - Trigger press to first ring frame is 16 ms or less (measured).
 - Open/hover/select/close run at full refresh rate with no dropped frames on both monitors
   (PresentMon), including with one monitor temporarily at 125% scaling.
-- One overlay per monitor, created once at startup and pre-warmed with an invisible reveal; none
+- One overlay per monitor, created once at startup and pre-warmed with an invisible open; none
   is ever hidden, resized or moved to another monitor.
-- Hover highlight lands on the same frame the cursor enters a slice.
+- The focus zoom starts moving on the same frame the aim changes.
+- Tap and hold both work as described above; clicks and Esc used by an open ring never reach the
+  app underneath.
+- Near screen edges and corners every item stays visible and reachable: the ring stays centred on
+  the cursor and the slots spread evenly over the free arc, keeping their clockwise order (chosen
+  by the user over shifting the ring).
+- Fail-open verified live with swallowing on: a stalled core lets the trigger and clicks through.
 - The overlay never takes focus: a "send shortcut" slot reaches the app that was in front.
 - Launch app/file, open URL and send shortcut actions work.
 - Config is loaded from `%APPDATA%\com.liamerens.clickhub\config.json` and validated; invalid

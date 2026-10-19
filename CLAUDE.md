@@ -31,14 +31,17 @@ auto-disables in full-screen games, and must stay light and stable on multi-moni
    - Trigger press to first ring frame: 16 ms or less.
    - Open, hover, select and close run at the display refresh rate (60/144/165 Hz) with no
      dropped frames.
-   - Open animation about 120–180 ms, close about 100 ms. Animations never block input.
-   - Hover highlight appears on the same frame the cursor enters a slice.
+   - Open animation about 300 ms (the approved staged bloom: lines grow, then labels pop), close about
+     100 ms. Animations never block input: an item can be picked while the ring is still opening.
+   - The focus zoom starts moving on the same frame the aim direction changes.
    - The settings window holds 60 fps while scrolling and dragging with 50+ actions configured.
-2. **The overlay window is created once at startup and is never hidden, never resized and never
-   focused.** It is ring-sized, not full-screen. When idle it is transparent and click-through,
-   with WebView2 background throttling off. It is `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`: never in
-   the taskbar or Alt-Tab, never takes focus (otherwise "send shortcut" hits the wrong window).
-   It only moves to the cursor. The settings window is opaque.
+2. **One overlay window per monitor, created once at startup, never hidden, never resized, never
+   focused and never moved to another monitor.** It is ring-sized, not full-screen, and always
+   transparent and click-through: aim and clicks come from the hook, never from the window. It
+   is `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`: never in the taskbar or Alt-Tab, never takes focus
+   (otherwise "send shortcut" hits the wrong window). Because it is never hidden, WebView2 never
+   throttles it. It is pre-warmed with one invisible open at startup and only moves within its
+   own monitor. The settings window is opaque.
 3. **Animate only `transform` and `opacity`**, with eased or spring curves. No layout-triggering
    properties, no animated box-shadow, no large blurs. `prefers-reduced-motion` gets a fade-only
    fallback.
@@ -135,8 +138,8 @@ Fix formatting with `pnpm format` and `cargo fmt`.
 | Phase               | Goal                                                        | Status      |
 | ------------------- | ----------------------------------------------------------- | ----------- |
 | 0 — Foundation      | Repo, docs, rules, CI, empty tray app                       | Done        |
-| 1 — Trigger         | Low-level hook thread, configurable button, overlay spike   | In progress |
-| 2 — Ring            | Overlay at cursor, static actions, full-screen auto-disable | Not started |
+| 1 — Trigger         | Low-level hook thread, configurable button, overlay spike   | Done        |
+| 2 — Ring            | Overlay at cursor, static actions, full-screen auto-disable | In progress |
 | 3 — Settings UI     | Ring editor, trigger picker, persistence                    | Not started |
 | 4 — Lifecycle       | Installer, autostart, uninstall, updater                    | Not started |
 | 5 — Profiles        | Per-app rings, nested sub-rings, per-app blocklist          | Not started |
