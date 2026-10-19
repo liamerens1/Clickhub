@@ -20,10 +20,23 @@ tauri-build = { version = "=2.7.3", features = [] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 tauri = { version = "=2.12.4", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "=2.4.1"
 tauri-plugin-single-instance = "=2.5.4"
 thiserror = "=2.0.21"
 tracing = "=0.1.44"
+tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+# Only hook/ and platform/ may use this (see docs/coding-guidelines.md).
+windows = { version = "=0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_Security",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [lints.rust]
 # Only hook/ and platform/ may opt back in with #![allow(unsafe_code)].
