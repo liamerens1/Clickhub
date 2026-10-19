@@ -7,3 +7,4 @@ mod run;
 mod runtime;
 
 pub use run::run;
+pub(crate) use runtime::Runtime;

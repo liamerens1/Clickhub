@@ -8,6 +8,7 @@ mod app;
 pub mod config;
 pub mod core;
 mod hook;
+mod ipc;
 mod overlay;
 mod platform;
 mod settings;

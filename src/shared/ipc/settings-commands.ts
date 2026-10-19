@@ -1,0 +1,90 @@
+import { invoke } from "@tauri-apps/api/core";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { z } from "zod";
+
+import { type Config, configSchema } from "../schema";
+
+/**
+ * Typed wrappers over the Rust commands in `src-tauri/src/ipc/` for the settings window. Every
+ * reply is validated before use, and failures come back as values, never as exceptions.
+ */
+
+export const configSnapshotSchema = z.object({
+  config: configSchema,
+  path: z.string(),
+  problem: z
+    .object({
+      error: z.string(),
+      backup: z.string().nullable(),
+      fallback: z.enum(["lastGood", "defaults"]),
+    })
+    .nullable(),
+});
+
+export const appStatusSchema = z.object({
+  paused: z.boolean(),
+  problem: z.string().nullable(),
+});
+
+export const appInfoSchema = z.object({
+  version: z.string(),
+  configPath: z.string(),
+  logDir: z.string().nullable(),
+});
+
+export type ConfigSnapshot = z.infer<typeof configSnapshotSchema>;
+export type AppStatus = z.infer<typeof appStatusSchema>;
+export type AppInfo = z.infer<typeof appInfoSchema>;
+export type Folder = "config" | "logs";
+export type IpcResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+async function call<T>(
+  command: string,
+  schema: z.ZodType<T>,
+  args?: Record<string, unknown>,
+): Promise<IpcResult<T>> {
+  let reply: unknown;
+  try {
+    reply = await invoke<unknown>(command, args);
+  } catch (error) {
+    return { ok: false, error: typeof error === "string" ? error : String(error) };
+  }
+  const result = schema.safeParse(reply);
+  if (!result.success) {
+    return { ok: false, error: `unexpected reply from ${command}: ${result.error.message}` };
+  }
+  return { ok: true, value: result.data };
+}
+
+export const getConfig = () => call("get_config", configSnapshotSchema);
+export const saveConfig = (config: Config) => call("save_config", configSnapshotSchema, { config });
+export const reloadConfig = () => call("reload_config", configSnapshotSchema);
+export const getStatus = () => call("get_status", appStatusSchema);
+export const setPaused = (paused: boolean) => call("set_paused", appStatusSchema, { paused });
+/** Switches the trigger off while the window waits for "press the button you want". */
+export const setTriggerCapture = (capturing: boolean) =>
+  call("set_trigger_capture", z.null(), { capturing });
+/** Opens the Windows file dialog; `null` when the user cancelled. */
+export const pickFile = () => call("pick_file", z.string().nullable());
+export const openFolder = (folder: Folder) => call("open_folder", z.null(), { folder });
+export const getAppInfo = () => call("get_app_info", appInfoSchema);
+
+/** The running config changed (saved here, or reloaded from the tray). */
+export function onConfigChanged(handler: () => void): Promise<UnlistenFn> {
+  return getCurrentWebviewWindow().listen<unknown>("config:changed", () => {
+    handler();
+  });
+}
+
+/** Pause state or the tray problem changed. */
+export function onStatusChanged(handler: (status: AppStatus) => void): Promise<UnlistenFn> {
+  return getCurrentWebviewWindow().listen<unknown>("status:changed", ({ payload }) => {
+    const result = appStatusSchema.safeParse(payload);
+    if (result.success) {
+      handler(result.data);
+    } else {
+      console.error("ClickHub settings: ignoring malformed status:changed", result.error.issues);
+    }
+  });
+}
