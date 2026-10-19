@@ -1,54 +1,87 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use crate::core::{LatencyStats, PressTracker};
-use crate::hook::{ButtonAction, HookEvent, SHARED};
+use crate::actions::ActionRunner;
+use crate::config::Action;
+use crate::core::{Aim, Button, LatencyStats, RingEffect, RingInput, RingSession};
+use crate::hook::{ButtonAction, HookEvent, HookEventKind, SHARED};
+use crate::overlay::Overlays;
 use crate::platform::{qpc_now, qpc_to_micros, tick_count_64};
 
-/// Wake at least this often so the heartbeat stays fresh while idle.
+/// Wake at least this often so the heartbeat stays fresh and idle rings can time out.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(100);
+/// While a ring is open, aim updates go to the page at most this often (a 1000 Hz mouse would
+/// otherwise send 1000 events a second). A change of focused slot is always sent at once, and a
+/// trailing update lands the exact final position.
+const AIM_INTERVAL: Duration = Duration::from_millis(4);
+/// Button events older than the hook's fail-open window (500 ms without a heartbeat) are
+/// ignored: the hook passed them through to the apps, so they are not ring input any more.
+const STALE_EVENT_US: u64 = 500_000;
+/// While a ring is open it is re-asserted on top this often.
+const ON_TOP_INTERVAL_US: u64 = 100_000;
 /// Log a latency summary every this many button events.
 const SUMMARY_EVERY: u64 = 100;
+/// Aim dead zone around the ring centre, in CSS pixels (scaled per monitor).
+const DEAD_ZONE_CSS_PX: f64 = 44.0;
 
-/// The consumer of hook events ("core" in docs/architecture.md). Phase 1 classifies trigger
-/// presses and measures latency; Phase 2 will open the ring from here.
+/// Messages from the rest of the app to the pipeline thread.
+pub enum PipelineCommand {
+    /// New ring contents after a config (re)load.
+    SetRing(Vec<Action>),
+    /// The keyboard-shortcut trigger went down or up (opens at the cursor).
+    KeyboardTrigger { pressed: bool },
+    /// Debug aid: block the pipeline thread once for this many milliseconds.
+    Stall(u64),
+}
+
+/// The consumer of hook events ("core" in docs/architecture.md): drives the ring session,
+/// the overlay and the action runner.
 pub struct Pipeline {
+    commands: Sender<PipelineCommand>,
     stop: Arc<AtomicBool>,
-    stall_ms: Arc<AtomicU64>,
     join: Option<JoinHandle<()>>,
 }
 
 impl Pipeline {
     /// # Errors
     ///
-    /// Fails only if the OS cannot start a thread.
-    pub fn spawn(events: Receiver<HookEvent>) -> std::io::Result<Self> {
+    /// Fails only if a thread cannot be started.
+    pub fn spawn(events: Receiver<HookEvent>, overlays: Arc<Overlays>) -> std::io::Result<Self> {
         let stop = Arc::new(AtomicBool::new(false));
-        let stall_ms = Arc::new(AtomicU64::new(0));
+        let (commands, command_receiver) = channel();
         let worker = Worker {
             events,
+            commands: command_receiver,
             stop: Arc::clone(&stop),
-            stall_ms: Arc::clone(&stall_ms),
-            tracker: PressTracker::default(),
+            session: RingSession::new(0, DEAD_ZONE_CSS_PX),
+            actions: Vec::new(),
+            overlays,
+            runner: ActionRunner::spawn()?,
             delivery: LatencyStats::default(),
             button_events: 0,
+            open_hook_qpc: 0,
+            pending_aim: None,
+            last_aim_qpc: 0,
+            last_aim_nearest: None,
+            last_on_top_qpc: 0,
         };
         let join = thread::Builder::new()
             .name("clickhub-pipeline".into())
             .spawn(move || worker.run())?;
         Ok(Self {
+            commands,
             stop,
-            stall_ms,
             join: Some(join),
         })
     }
 
-    /// Debug aid: blocks the pipeline thread once for `ms`, to prove the hook fails open.
-    pub fn stall_for(&self, ms: u64) {
-        self.stall_ms.store(ms, Ordering::Relaxed);
+    pub fn send(&self, command: PipelineCommand) {
+        if self.commands.send(command).is_err() {
+            tracing::error!("pipeline thread is gone; command dropped");
+        }
     }
 
     pub fn stop(mut self) {
@@ -73,66 +106,164 @@ impl Drop for Pipeline {
 
 struct Worker {
     events: Receiver<HookEvent>,
+    commands: Receiver<PipelineCommand>,
     stop: Arc<AtomicBool>,
-    stall_ms: Arc<AtomicU64>,
-    tracker: PressTracker,
+    session: RingSession,
+    actions: Vec<Action>,
+    overlays: Arc<Overlays>,
+    runner: ActionRunner,
     delivery: LatencyStats,
     button_events: u64,
+    open_hook_qpc: i64,
+    pending_aim: Option<Aim>,
+    last_aim_qpc: i64,
+    last_aim_nearest: Option<usize>,
+    last_on_top_qpc: i64,
 }
 
 impl Worker {
     fn run(mut self) {
         while !self.stop.load(Ordering::Relaxed) {
             SHARED.heartbeat();
-            let stall_ms = self.stall_ms.swap(0, Ordering::Relaxed);
-            if stall_ms > 0 {
-                tracing::warn!(stall_ms, "debug: stalling the pipeline");
-                thread::sleep(Duration::from_millis(stall_ms));
+            if self.session.is_open()
+                && qpc_to_micros(qpc_now() - self.last_on_top_qpc) >= ON_TOP_INTERVAL_US
+            {
+                // Switching apps (Alt+Tab) can raise another always-on-top window above the ring.
+                self.last_on_top_qpc = qpc_now();
+                self.overlays.keep_open_ring_on_top();
             }
-            match self.events.recv_timeout(HEARTBEAT_INTERVAL) {
+            while let Ok(command) = self.commands.try_recv() {
+                self.command(command);
+            }
+            let wait = if self.pending_aim.is_some() {
+                AIM_INTERVAL
+            } else {
+                HEARTBEAT_INTERVAL
+            };
+            match self.events.recv_timeout(wait) {
                 Ok(event) => self.handle(event),
-                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Timeout) => {
+                    if let Some(aim) = self.pending_aim.take() {
+                        self.send_aim(aim);
+                    }
+                    let effects = self.session.handle(RingInput::Tick, tick_count_64());
+                    self.apply(&effects);
+                }
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
+        let effects = self.session.reconfigure(0, DEAD_ZONE_CSS_PX);
+        self.apply(&effects);
         self.log_summary("final");
     }
 
-    fn handle(&mut self, event: HookEvent) {
-        let latency_us = qpc_to_micros(qpc_now() - event.qpc);
-        self.delivery.record(latency_us);
-        self.button_events += 1;
-
-        let now_ms = tick_count_64();
-        match event.action {
-            ButtonAction::Down if event.matched => {
-                self.tracker.on_down(now_ms);
-                tracing::info!(
-                    button = ?event.button,
-                    x = event.x,
-                    y = event.y,
-                    swallowed = event.swallowed,
-                    latency_us,
-                    "trigger pressed"
-                );
+    fn command(&mut self, command: PipelineCommand) {
+        match command {
+            PipelineCommand::SetRing(actions) => {
+                let effects = self.session.reconfigure(actions.len(), DEAD_ZONE_CSS_PX);
+                self.actions = actions;
+                self.apply(&effects);
             }
-            ButtonAction::Up if event.matched => {
-                if let Some(press) = self.tracker.on_up(now_ms) {
-                    tracing::info!(
-                        kind = ?press.kind,
-                        held_ms = press.held_ms,
-                        swallowed = event.swallowed,
-                        latency_us,
-                        "trigger released"
-                    );
+            PipelineCommand::KeyboardTrigger { pressed } => {
+                let input = if pressed {
+                    let (x, y) = SHARED.point();
+                    self.open_hook_qpc = qpc_now();
+                    RingInput::TriggerDown { x, y }
+                } else {
+                    RingInput::TriggerUp
+                };
+                let effects = self.session.handle(input, tick_count_64());
+                self.apply(&effects);
+            }
+            PipelineCommand::Stall(ms) => {
+                tracing::warn!(stall_ms = ms, "debug: stalling the pipeline");
+                thread::sleep(Duration::from_millis(ms));
+            }
+        }
+    }
+
+    fn handle(&mut self, event: HookEvent) {
+        let input = match event.kind {
+            HookEventKind::Button {
+                button,
+                action,
+                matched,
+                swallowed,
+            } => {
+                let latency_us = qpc_to_micros(qpc_now() - event.qpc);
+                if latency_us > STALE_EVENT_US {
+                    // Queued while the pipeline was stalled. The hook already let these clicks
+                    // through (fail open), so acting on them now would open a ring seconds late.
+                    tracing::debug!(latency_us, "dropping a stale button event");
+                    return;
+                }
+                self.delivery.record(latency_us);
+                self.button_events += 1;
+                if self.button_events.is_multiple_of(SUMMARY_EVERY) {
+                    self.log_summary("periodic");
+                }
+                ring_input(button, action, matched, swallowed, event)
+            }
+            HookEventKind::Move => Some(RingInput::Move {
+                x: event.x,
+                y: event.y,
+            }),
+            HookEventKind::Escape => Some(RingInput::Dismiss),
+        };
+        if let Some(input) = input {
+            if matches!(input, RingInput::TriggerDown { .. }) {
+                self.open_hook_qpc = event.qpc;
+            }
+            let effects = self.session.handle(input, tick_count_64());
+            self.apply(&effects);
+        }
+    }
+
+    fn apply(&mut self, effects: &[RingEffect]) {
+        let mut fired = None;
+        for effect in effects {
+            match *effect {
+                RingEffect::Open { x, y } => {
+                    SHARED.set_ring_open(true);
+                    if let Some(opened) = self.overlays.open(x, y, self.open_hook_qpc) {
+                        self.session.set_dead_zone(DEAD_ZONE_CSS_PX * opened.scale);
+                        self.session.set_layout(opened.layout.angles);
+                    }
+                    tracing::debug!(x, y, "ring open");
+                }
+                RingEffect::Aim(aim) => {
+                    let due = qpc_to_micros(qpc_now() - self.last_aim_qpc)
+                        >= u64::try_from(AIM_INTERVAL.as_micros()).unwrap_or(u64::MAX);
+                    if due || aim.nearest != self.last_aim_nearest {
+                        self.send_aim(aim);
+                    } else {
+                        self.pending_aim = Some(aim);
+                    }
+                }
+                RingEffect::Fire { slot } => {
+                    fired = Some(slot);
+                    if let Some(action) = self.actions.get(slot) {
+                        tracing::info!(slot, action = %action.hint(), "slot fired");
+                        self.runner.run(action.clone());
+                    } else {
+                        tracing::warn!(slot, "fired slot has no action");
+                    }
+                }
+                RingEffect::Close => {
+                    self.pending_aim = None;
+                    self.last_aim_nearest = None;
+                    SHARED.set_ring_open(false);
+                    self.overlays.close(fired);
                 }
             }
-            _ => {}
         }
+    }
 
-        if self.button_events.is_multiple_of(SUMMARY_EVERY) {
-            self.log_summary("periodic");
-        }
+    fn send_aim(&mut self, aim: Aim) {
+        self.pending_aim = None;
+        self.last_aim_qpc = qpc_now();
+        self.last_aim_nearest = aim.nearest;
+        self.overlays.aim(aim);
     }
 
     fn log_summary(&self, reason: &str) {
@@ -155,5 +286,28 @@ impl Worker {
             dropped_events = SHARED.dropped_events(),
             "hook latency"
         );
+    }
+}
+
+/// Maps a button event to what it means for the ring.
+fn ring_input(
+    button: Button,
+    action: ButtonAction,
+    matched: bool,
+    swallowed: bool,
+    event: HookEvent,
+) -> Option<RingInput> {
+    match (action, matched, swallowed) {
+        (ButtonAction::Down, true, _) => Some(RingInput::TriggerDown {
+            x: event.x,
+            y: event.y,
+        }),
+        (ButtonAction::Up, true, _) => Some(RingInput::TriggerUp),
+        // A non-trigger click captured by an open ring.
+        (ButtonAction::Down, false, true) if button == Button::Left => {
+            Some(RingInput::PrimaryClick)
+        }
+        (ButtonAction::Down, false, true) => Some(RingInput::Dismiss),
+        _ => None,
     }
 }

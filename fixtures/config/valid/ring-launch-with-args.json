@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "ring": {
+    "slots": [
+      { "label": "Copy", "action": { "kind": "shortcut", "keys": "Ctrl+C" } },
+      {
+        "label": "Notes",
+        "action": { "kind": "launch", "path": "C:/Windows/notepad.exe", "args": ["todo.txt"] }
+      }
+    ]
+  }
+}

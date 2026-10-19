@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "ring": [
+    { "label": "Copy", "action": { "kind": "shortcut", "keys": "Ctrl+C" } },
+    { "label": "Copy", "action": { "kind": "shortcut", "keys": "Ctrl+C" } }
+  ]
+}

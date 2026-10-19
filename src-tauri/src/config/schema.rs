@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::Trigger;
+use super::{Ring, Trigger};
 
 /// Config file version this build understands. Mirrors `CONFIG_VERSION` in
 /// `src/shared/schema/config.ts`.
@@ -14,6 +14,8 @@ pub struct Config {
     pub version: u32,
     #[serde(default)]
     pub trigger: Trigger,
+    #[serde(default)]
+    pub ring: Ring,
 }
 
 impl Default for Config {
@@ -21,6 +23,7 @@ impl Default for Config {
         Self {
             version: CONFIG_VERSION,
             trigger: Trigger::default(),
+            ring: Ring::default(),
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Startup, the trigger pipeline, the runtime that owns background threads, and shutdown.
 
+mod fullscreen_watch;
 mod logging;
 mod pipeline;
 mod run;

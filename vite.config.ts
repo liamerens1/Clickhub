@@ -6,9 +6,10 @@ import { defineConfig } from "vite";
 const repoRoot = import.meta.dirname;
 const srcRoot = resolve(repoRoot, "src");
 
-// One HTML entry per Tauri window. The overlay entry is added in Phase 2.
+// One HTML entry per Tauri window.
 const entries = {
   settings: resolve(srcRoot, "settings/index.html"),
+  overlay: resolve(srcRoot, "overlay/index.html"),
 };
 
 export default defineConfig({

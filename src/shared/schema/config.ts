@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { DEFAULT_RING, ringSchema } from "./ring";
 import { DEFAULT_TRIGGER, triggerSchema } from "./trigger";
 
 /**
@@ -12,6 +13,7 @@ export const configSchema = z
   .object({
     version: z.literal(CONFIG_VERSION),
     trigger: triggerSchema.default(DEFAULT_TRIGGER),
+    ring: ringSchema.default(DEFAULT_RING),
   })
   .strict();
 
