@@ -1,0 +1,75 @@
+name: Release
+
+# Pushing a v* tag builds the per-user NSIS installer, signs the update files with the updater
+# key and creates a DRAFT GitHub Release. Nothing reaches users until a person publishes it.
+# A tag with a pre-release suffix (v0.4.0-rc.1) becomes a pre-release, which the updater's
+# "latest" endpoint never serves.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and draft release (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Install Rust toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install pnpm (version from package.json)
+        uses: pnpm/action-setup@v6
+
+      - name: Install Node (version from .nvmrc)
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the tag matches the app version
+        run: |
+          version=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          test "${GITHUB_REF_NAME}" = "v${version}" || { echo "tag ${GITHUB_REF_NAME} != v${version}"; exit 1; }
+
+      - name: Build the installer and signed update files
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build
+
+      - name: Write the update manifest
+        run: node scripts/release-manifest.ts "${GITHUB_REF_NAME}" latest.json
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir=src-tauri/target/release/bundle/nsis
+          prerelease=""
+          case "${GITHUB_REF_NAME}" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "${GITHUB_REF_NAME}" --draft ${prerelease} \
+            --title "ClickHub ${GITHUB_REF_NAME}" --generate-notes \
+            "${dir}"/*-setup.exe "${dir}"/*-setup.exe.sig latest.json
