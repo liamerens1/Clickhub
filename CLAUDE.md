@@ -139,8 +139,8 @@ Fix formatting with `pnpm format` and `cargo fmt`.
 | ------------------- | ----------------------------------------------------------- | ----------- |
 | 0 — Foundation      | Repo, docs, rules, CI, empty tray app                       | Done        |
 | 1 — Trigger         | Low-level hook thread, configurable button, overlay spike   | Done        |
-| 2 — Ring            | Overlay at cursor, static actions, full-screen auto-disable | In progress |
-| 3 — Settings UI     | Ring editor, trigger picker, persistence                    | Not started |
+| 2 — Ring            | Overlay at cursor, static actions, full-screen auto-disable | Done        |
+| 3 — Settings UI     | Ring editor, trigger picker, persistence                    | In progress |
 | 4 — Lifecycle       | Installer, autostart, uninstall, updater                    | Not started |
 | 5 — Profiles        | Per-app rings, nested sub-rings, per-app blocklist          | Not started |
 | 6 — Actions & modes | Remaining actions, marking/turbo modes, theme presets       | Not started |

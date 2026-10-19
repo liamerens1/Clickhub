@@ -1,6 +1,6 @@
 [package]
 name = "clickhub"
-version = "0.0.0"
+version = "0.3.0"
 description = "ClickHub: a configurable radial control center for Windows"
 authors = ["Liam Erens"]
 edition = "2024"
@@ -20,6 +20,7 @@ tauri-build = { version = "=2.7.3", features = [] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 tauri = { version = "=2.12.4", features = ["tray-icon"] }
+tauri-plugin-dialog = "=2.8.1"
 tauri-plugin-global-shortcut = "=2.4.1"
 tauri-plugin-notification = "=2.7.0"
 tauri-plugin-single-instance = "=2.5.4"
