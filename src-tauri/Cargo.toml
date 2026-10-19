@@ -1,6 +1,6 @@
 [package]
 name = "clickhub"
-version = "0.0.0"
+version = "0.3.0"
 description = "ClickHub: a configurable radial control center for Windows"
 authors = ["Liam Erens"]
 edition = "2024"
