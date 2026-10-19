@@ -22,9 +22,17 @@ pub struct Shared {
     filter_modifiers: AtomicU8,
     filter_swallow: AtomicBool,
     paused: AtomicBool,
+    /// The foreground app is full-screen: the trigger passes through untouched.
+    suppressed: AtomicBool,
+    /// A ring is open: moves are posted, and clicks and Esc are captured for it.
+    ring_open: AtomicBool,
     core_heartbeat_ms: AtomicU64,
-    /// Button whose `Down` was swallowed; its `Up` must be swallowed too (0 = none).
-    pub(super) swallowed_button: AtomicU8,
+    /// Bit per `Button::code()` whose `Down` was swallowed; its `Up` must be swallowed too.
+    pub(super) swallowed_buttons: AtomicU8,
+    /// Esc's key-down was swallowed for an open ring; swallow its key-up too.
+    pub(super) escape_swallowed: AtomicBool,
+    /// Last cursor position seen by the mouse hook, packed as `(x << 32) | (y as u32)`.
+    pub(super) last_point: AtomicU64,
     pub(super) last_mouse_tick: AtomicU32,
     pub(super) last_keyboard_tick: AtomicU32,
     pub(super) dropped_events: AtomicU64,
@@ -45,8 +53,12 @@ impl Shared {
             filter_modifiers: AtomicU8::new(0),
             filter_swallow: AtomicBool::new(false),
             paused: AtomicBool::new(false),
+            suppressed: AtomicBool::new(false),
+            ring_open: AtomicBool::new(false),
             core_heartbeat_ms: AtomicU64::new(0),
-            swallowed_button: AtomicU8::new(0),
+            swallowed_buttons: AtomicU8::new(0),
+            escape_swallowed: AtomicBool::new(false),
+            last_point: AtomicU64::new(0),
             last_mouse_tick: AtomicU32::new(0),
             last_keyboard_tick: AtomicU32::new(0),
             dropped_events: AtomicU64::new(0),
@@ -73,6 +85,41 @@ impl Shared {
 
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Relaxed);
+    }
+
+    /// Set while the foreground app is full-screen.
+    pub fn set_suppressed(&self, suppressed: bool) {
+        self.suppressed.store(suppressed, Ordering::Relaxed);
+    }
+
+    pub fn is_suppressed(&self) -> bool {
+        self.suppressed.load(Ordering::Relaxed)
+    }
+
+    /// Set by the pipeline while a ring is open.
+    pub fn set_ring_open(&self, open: bool) {
+        self.ring_open.store(open, Ordering::Relaxed);
+    }
+
+    /// A ring is open and the pipeline is alive. When the pipeline stalls this turns false
+    /// within [`CORE_TIMEOUT_MS`], so clicks are never captured by a ring nobody serves.
+    pub(super) fn ring_capturing(&self) -> bool {
+        self.ring_open.load(Ordering::Relaxed) && self.core_alive()
+    }
+
+    pub(super) fn store_point(&self, x: i32, y: i32) {
+        let packed = (u64::from(x.cast_unsigned()) << 32) | u64::from(y.cast_unsigned());
+        self.last_point.store(packed, Ordering::Relaxed);
+    }
+
+    /// Last cursor position the mouse hook saw, in physical screen pixels.
+    pub fn point(&self) -> (i32, i32) {
+        let packed = self.last_point.load(Ordering::Relaxed);
+        #[allow(clippy::cast_possible_truncation)] // unpacking two 32-bit halves.
+        (
+            ((packed >> 32) as u32).cast_signed(),
+            (packed as u32).cast_signed(),
+        )
     }
 
     pub fn is_paused(&self) -> bool {
