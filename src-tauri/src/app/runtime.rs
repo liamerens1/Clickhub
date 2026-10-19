@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::sync_channel;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -8,9 +8,10 @@ use tauri_plugin_notification::NotificationExt;
 
 use super::fullscreen_watch::FullscreenWatch;
 use super::pipeline::{Pipeline, PipelineCommand};
-use crate::config::{self, Fallback, LoadStatus, Trigger};
+use crate::config::{self, Config, ConfigError, Fallback, LoadStatus, Loaded, Trigger};
 use crate::core::TriggerFilter;
 use crate::hook::{HookThread, SHARED, Watchdog};
+use crate::ipc;
 use crate::overlay::{Overlays, RingView};
 use crate::tray;
 
@@ -34,6 +35,13 @@ struct Inner {
     /// A problem that config reloads cannot fix (e.g. the hook could not be installed).
     hook_problem: Option<String>,
     config_problem: Option<String>,
+    /// The config in use and how it was obtained (shown in settings).
+    loaded: Option<Loaded>,
+    /// Paused by the user (tray or settings).
+    paused: bool,
+    /// The settings window is listening for a new trigger: the current one is switched off so
+    /// the press reaches the window instead of opening the ring.
+    capturing: bool,
 }
 
 impl Runtime {
@@ -81,6 +89,9 @@ impl Runtime {
                 pipeline: Some(pipeline),
                 hook_problem,
                 config_problem: None,
+                loaded: None,
+                paused: false,
+                capturing: false,
             }),
         };
         runtime.apply_config(app);
@@ -94,30 +105,11 @@ impl Runtime {
         let mut problem = report_load_status(&loaded.status, &self.config_dir);
 
         SHARED.set_filter(TriggerFilter::from_trigger(&loaded.config.trigger));
-        if let Err(error) = app.global_shortcut().unregister_all() {
-            tracing::warn!(%error, "could not clear the previous keyboard trigger");
-        }
-        match &loaded.config.trigger {
-            Trigger::Mouse(mouse) => tracing::info!(
-                button = ?mouse.button,
-                modifiers = ?mouse.modifiers,
-                swallow = mouse.swallow,
-                "mouse trigger active"
-            ),
-            Trigger::Keyboard(keyboard) => {
-                let registered = app.global_shortcut().on_shortcut(
-                    keyboard.shortcut.as_str(),
-                    |app, _shortcut, event| {
-                        on_keyboard_trigger(app, event.state());
-                    },
-                );
-                if let Err(error) = registered {
-                    tracing::error!(shortcut = keyboard.shortcut, %error, "keyboard trigger unavailable");
-                    problem = Some("keyboard trigger unavailable (see log)".to_owned());
-                } else {
-                    tracing::info!(shortcut = keyboard.shortcut, "keyboard trigger active");
-                }
-            }
+        let capturing = self.lock().capturing;
+        if !capturing
+            && let Some(trigger_problem) = register_keyboard_trigger(app, &loaded.config.trigger)
+        {
+            problem = Some(trigger_problem);
         }
 
         self.overlays
@@ -144,15 +136,91 @@ impl Runtime {
             pipeline.send(PipelineCommand::SetRing(actions));
         }
         inner.config_problem = problem;
+        inner.loaded = Some(loaded);
         drop(inner);
         self.show_status(app);
+        ipc::emit_config_changed(app);
+    }
+
+    /// Validates and writes `config` (from the settings window), then applies it.
+    ///
+    /// # Errors
+    ///
+    /// The [`ConfigError`] if `config` breaks a rule or cannot be written; nothing is applied.
+    pub fn save_config(&self, app: &AppHandle, config: &Config) -> Result<(), ConfigError> {
+        config::save(&self.config_dir, config)?;
+        tracing::info!(
+            slots = config.ring.slots.len(),
+            "config saved from settings"
+        );
+        self.apply_config(app);
+        Ok(())
+    }
+
+    /// The config in use and how it was obtained.
+    pub fn loaded(&self) -> Option<Loaded> {
+        self.lock().loaded.clone()
+    }
+
+    pub fn config_path(&self) -> PathBuf {
+        self.config_dir.join(config::CONFIG_FILE)
+    }
+
+    pub fn config_dir(&self) -> &Path {
+        &self.config_dir
     }
 
     pub fn toggle_pause(&self, app: &AppHandle) {
-        let paused = !SHARED.is_paused();
-        SHARED.set_paused(paused);
-        tracing::info!(paused, "trigger pause toggled");
+        let paused = !self.lock().paused;
+        self.set_paused(app, paused);
+    }
+
+    pub fn set_paused(&self, app: &AppHandle, paused: bool) {
+        let mut inner = self.lock();
+        inner.paused = paused;
+        SHARED.set_paused(inner.paused || inner.capturing);
+        drop(inner);
+        tracing::info!(paused, "trigger pause set");
         self.show_status(app);
+    }
+
+    /// Switches the trigger off while the settings window listens for a new one, so the press
+    /// reaches the window (a paused hook passes every button through; an unregistered keyboard
+    /// shortcut reaches the focused window). Switching it back on restores the user's pause
+    /// state and the configured keyboard trigger.
+    pub fn set_capturing(&self, app: &AppHandle, capturing: bool) {
+        let mut inner = self.lock();
+        if inner.capturing == capturing {
+            return;
+        }
+        inner.capturing = capturing;
+        SHARED.set_paused(inner.paused || capturing);
+        let trigger = inner
+            .loaded
+            .as_ref()
+            .map(|loaded| loaded.config.trigger.clone());
+        drop(inner);
+        tracing::info!(capturing, "trigger capture");
+        if capturing {
+            if let Err(error) = app.global_shortcut().unregister_all() {
+                tracing::warn!(%error, "could not switch off the keyboard trigger for capture");
+            }
+        } else if let Some(trigger) = trigger
+            && let Some(problem) = register_keyboard_trigger(app, &trigger)
+        {
+            self.lock().config_problem = Some(problem);
+            self.show_status(app);
+        }
+    }
+
+    /// Whether the user paused the trigger, and the problem shown in the tray, if any.
+    pub fn status(&self) -> (bool, Option<String>) {
+        let inner = self.lock();
+        let problem = inner
+            .hook_problem
+            .clone()
+            .or_else(|| inner.config_problem.clone());
+        (inner.paused, problem)
     }
 
     pub fn simulate_hook_loss(&self) {
@@ -188,12 +256,9 @@ impl Runtime {
     }
 
     fn show_status(&self, app: &AppHandle) {
-        let inner = self.lock();
-        let problem = inner
-            .hook_problem
-            .as_deref()
-            .or(inner.config_problem.as_deref());
-        tray::show_status(app, SHARED.is_paused(), problem);
+        let (paused, problem) = self.status();
+        tray::show_status(app, paused, problem.as_deref());
+        ipc::emit_status_changed(app, paused, problem);
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner> {
@@ -203,6 +268,40 @@ impl Runtime {
     fn send(&self, command: PipelineCommand) {
         if let Some(pipeline) = &self.lock().pipeline {
             pipeline.send(command);
+        }
+    }
+}
+
+/// Replaces any registered keyboard trigger with `trigger`'s, if it is one. Returns a short tray
+/// message if the shortcut could not be registered.
+fn register_keyboard_trigger(app: &AppHandle, trigger: &Trigger) -> Option<String> {
+    if let Err(error) = app.global_shortcut().unregister_all() {
+        tracing::warn!(%error, "could not clear the previous keyboard trigger");
+    }
+    match trigger {
+        Trigger::Mouse(mouse) => {
+            tracing::info!(
+                button = ?mouse.button,
+                modifiers = ?mouse.modifiers,
+                swallow = mouse.swallow,
+                "mouse trigger active"
+            );
+            None
+        }
+        Trigger::Keyboard(keyboard) => {
+            let registered = app.global_shortcut().on_shortcut(
+                keyboard.shortcut.as_str(),
+                |app, _shortcut, event| {
+                    on_keyboard_trigger(app, event.state());
+                },
+            );
+            if let Err(error) = registered {
+                tracing::error!(shortcut = keyboard.shortcut, %error, "keyboard trigger unavailable");
+                Some("keyboard trigger unavailable (see log)".to_owned())
+            } else {
+                tracing::info!(shortcut = keyboard.shortcut, "keyboard trigger active");
+                None
+            }
         }
     }
 }

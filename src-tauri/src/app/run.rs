@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tauri::{App, AppHandle, Manager, RunEvent};
 
 use super::runtime::Runtime;
+use crate::ipc;
 use crate::overlay::{Overlays, RingView};
 use crate::settings;
 use crate::tray::{self, MenuAction};
@@ -30,6 +31,18 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            ipc::config_commands::get_config,
+            ipc::config_commands::save_config,
+            ipc::config_commands::reload_config,
+            ipc::app_commands::get_status,
+            ipc::app_commands::set_paused,
+            ipc::app_commands::set_trigger_capture,
+            ipc::app_commands::pick_file,
+            ipc::app_commands::open_folder,
+            ipc::app_commands::get_app_info,
+        ])
         .setup(setup)
         .build(context);
 

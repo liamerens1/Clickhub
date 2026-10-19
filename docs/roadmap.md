@@ -113,7 +113,11 @@ settings).
 
 ## Phase 2 — Ring
 
-**Status:** In progress (branch `feat/ring/2`)
+**Status:** Done (2026-10-19, PR #5; release PR #6 to `main` as `v0.2.0`). Not yet live-tested,
+carried into Phase 3 as explicit checks: fail-open with swallowing on (stalled core), a "send
+shortcut" slot landing in Notepad (focus never stolen), one monitor at 125%, the reduced-motion
+fade, the keyboard-chord trigger and a 1-hour run. Known issue: on the 180 Hz monitor the ring
+animates at the 165 Hz monitor's cadence (follow-up).
 
 **Goal:** the ring at the cursor with static actions read from `config.json`, tap or hold
 interaction, the approved spoke design, and basic full-screen auto-disable.
@@ -156,16 +160,33 @@ the centre cancels. Swallowing is on by default from this phase.
 
 ## Phase 3 — Settings UI
 
-**Status:** Not started
+**Status:** In progress (branch `feat/settings/3`)
 
 **Goal:** ring editor, trigger picker ("press the button you want"), persistence.
+
+**Design (chosen 2026-10-19 from an interactive mockup):** soft and rounded throughout (rounded
+panels, rows, buttons and sidebar items; no hard borders), following Windows light/dark.
+
+- **Layout:** a slim left sidebar with sections Ring, Trigger, General and About (Profiles in
+  Phase 5 and Themes in Phase 6 join it later); the selected section fills the right.
+- **Saving:** every change applies to the live ring at once and is written to `config.json`; Undo
+  (button and Ctrl+Z) steps back through this session's changes. Text fields save when they are
+  valid and the user pauses typing.
+- **Ring editor:** a list of slots, clockwise from the top, reordered by dragging (or Alt+Up/Down)
+  and edited in place, beside a small live preview of the ring.
+- **Actions:** a shortcut recorder (press the keys; a Win toggle covers chords Windows keeps for
+  itself), a Browse button using the Windows file dialog for apps and files, and quick presets
+  (Copy, Paste, Undo, Screenshot, Task Manager, Show desktop, ...).
 
 **Done when:**
 
 - The user rebinds the trigger and edits slots without touching JSON.
 - Config survives a restart.
 - Config errors are shown in the settings window with what to fix.
-- The settings window holds 60 fps while scrolling and dragging with 50+ actions (DevTools trace).
+- The settings window holds 60 fps while scrolling and dragging with 50+ actions (DevTools trace
+  or `requestAnimationFrame` timing). A ring holds at most 12 slots, so until profiles arrive in
+  Phase 5 this is measured on the same list component with a synthetic 60-row list.
+- The Phase 2 checks carried over above are run and recorded.
 
 ## Phase 4 — Lifecycle
 
