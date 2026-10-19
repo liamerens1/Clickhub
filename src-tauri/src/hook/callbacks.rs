@@ -1,17 +1,19 @@
-//! The two low-level hook procedures. Hard rule 5: only match the trigger and post a message.
+//! The two low-level hook procedures. Hard rule 5: only match and post a message.
 //! No allocation, no I/O, no logging, no locks. Everything here reads and writes atomics.
 
 use std::sync::atomic::Ordering;
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, HC_ACTION, LLMHF_INJECTED, MSLLHOOKSTRUCT, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+    CallNextHookEx, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_INJECTED, LLMHF_INJECTED, MSLLHOOKSTRUCT,
+    WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE,
+    WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
     XBUTTON1, XBUTTON2,
 };
 
 use super::shared::{SENDER, SHARED};
-use super::{ButtonAction, HookEvent};
+use super::{ButtonAction, HookEvent, HookEventKind};
 use crate::core::Button;
 use crate::platform::{held_modifiers, qpc_now, tick_count};
 
@@ -35,8 +37,15 @@ pub(super) unsafe extern "system" fn mouse_proc(
         // for the duration of this call. We only read it.
         let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
         let injected = info.flags & LLMHF_INJECTED != 0;
-        if !injected && let Some((button, action)) = classify(wparam, info.mouseData) {
-            swallow = on_button(button, action, info.pt, started);
+        if !injected {
+            SHARED.store_point(info.pt.x, info.pt.y);
+            if u32::try_from(wparam.0).is_ok_and(|message| message == WM_MOUSEMOVE) {
+                if SHARED.ring_capturing() {
+                    post(HookEventKind::Move, info.pt, started);
+                }
+            } else if let Some((button, action)) = classify(wparam, info.mouseData) {
+                swallow = on_button(button, action, info.pt, started);
+            }
         }
     }
 
@@ -49,63 +58,93 @@ pub(super) unsafe extern "system" fn mouse_proc(
     }
 }
 
-/// `WH_KEYBOARD_LL` procedure. Phase 1 only uses it as a liveness signal for the watchdog.
+/// `WH_KEYBOARD_LL` procedure: a liveness signal for the watchdog, and Esc for an open ring.
 pub(super) unsafe extern "system" fn keyboard_proc(
     code: i32,
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let mut swallow = false;
     if code == HC_ACTION.cast_signed() {
+        let started = qpc_now();
         SHARED
             .last_keyboard_tick
             .store(tick_count(), Ordering::Relaxed);
+        // SAFETY: for HC_ACTION, lparam points to a KBDLLHOOKSTRUCT valid for this call.
+        let info = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        let injected = info.flags.0 & LLKHF_INJECTED.0 != 0;
+        if !injected && info.vkCode == u32::from(VK_ESCAPE.0) {
+            let message = u32::try_from(wparam.0).unwrap_or(0);
+            if message == WM_KEYDOWN || message == WM_SYSKEYDOWN {
+                if SHARED.ring_capturing() {
+                    SHARED.escape_swallowed.store(true, Ordering::Relaxed);
+                    let (x, y) = SHARED.point();
+                    post(HookEventKind::Escape, POINT { x, y }, started);
+                    swallow = true;
+                }
+            } else if message == WM_KEYUP || message == WM_SYSKEYUP {
+                swallow = SHARED.escape_swallowed.swap(false, Ordering::Relaxed);
+            }
+        }
     }
-    // SAFETY: forwarding the unchanged arguments to the next hook, as required.
-    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+    if swallow {
+        SWALLOW
+    } else {
+        // SAFETY: forwarding the unchanged arguments to the next hook, as required.
+        unsafe { CallNextHookEx(None, code, wparam, lparam) }
+    }
 }
 
 /// Decides whether to swallow, then posts the event. Returns true to swallow.
 fn on_button(button: Button, action: ButtonAction, pt: POINT, qpc: i64) -> bool {
     let filter = SHARED.filter();
-    let paused = SHARED.is_paused();
-    let is_trigger_button = !paused && filter.button == Some(button);
+    let blocked = SHARED.is_paused() || SHARED.is_suppressed();
+    let is_trigger_button = !blocked && filter.button == Some(button);
+    let bit = 1_u8 << button.code();
 
     let (matched, swallowed) = match action {
         ButtonAction::Down => {
             // Only query modifier state for the trigger button: ordinary clicks stay cheap.
             let matched = is_trigger_button && filter.matches(button, held_modifiers());
-            let swallowed = matched && filter.swallow && SHARED.core_alive();
+            let swallowed = if matched {
+                filter.swallow && SHARED.core_alive()
+            } else {
+                // Any other button while a ring is open belongs to the ring.
+                !blocked && SHARED.ring_capturing()
+            };
             if swallowed {
-                SHARED
-                    .swallowed_button
-                    .store(button.code(), Ordering::Relaxed);
+                SHARED.swallowed_buttons.fetch_or(bit, Ordering::Relaxed);
             }
             (matched, swallowed)
         }
-        // Swallow an Up exactly when its Down was swallowed, even if the user paused in
+        // Swallow an Up exactly when its Down was swallowed, even if the state changed in
         // between: an app that saw no Down must not see a lone Up, and vice versa.
         ButtonAction::Up => {
-            let swallowed = SHARED
-                .swallowed_button
-                .compare_exchange(button.code(), 0, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok();
-            (is_trigger_button, swallowed)
+            let previous = SHARED.swallowed_buttons.fetch_and(!bit, Ordering::Relaxed);
+            (is_trigger_button, previous & bit != 0)
         }
     };
 
-    post(HookEvent {
-        button,
-        action,
-        matched,
-        swallowed,
-        x: pt.x,
-        y: pt.y,
+    post(
+        HookEventKind::Button {
+            button,
+            action,
+            matched,
+            swallowed,
+        },
+        pt,
         qpc,
-    });
+    );
     swallowed
 }
 
-fn post(event: HookEvent) {
+fn post(kind: HookEventKind, pt: POINT, qpc: i64) {
+    let event = HookEvent {
+        kind,
+        x: pt.x,
+        y: pt.y,
+        qpc,
+    };
     let delivered = SENDER
         .get()
         .is_some_and(|sender| sender.try_send(event).is_ok());
