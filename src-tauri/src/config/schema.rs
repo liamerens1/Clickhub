@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::Trigger;
+
 /// Config file version this build understands. Mirrors `CONFIG_VERSION` in
 /// `src/shared/schema/config.ts`.
 pub const CONFIG_VERSION: u32 = 1;
@@ -10,4 +12,15 @@ pub const CONFIG_VERSION: u32 = 1;
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
     pub version: u32,
+    #[serde(default)]
+    pub trigger: Trigger,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            version: CONFIG_VERSION,
+            trigger: Trigger::default(),
+        }
+    }
 }
