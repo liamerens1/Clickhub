@@ -22,9 +22,14 @@ pub struct MouseTrigger {
     /// Exact set of modifiers that must be held. Empty means "no modifiers held".
     #[serde(default)]
     pub modifiers: Vec<Modifier>,
-    /// Hide the trigger click from the app underneath. Off by default.
-    #[serde(default)]
+    /// Hide the trigger click from the app underneath. On by default since Phase 2, so opening
+    /// the ring does not also fire the button's normal action.
+    #[serde(default = "swallow_by_default")]
     pub swallow: bool,
+}
+
+const fn swallow_by_default() -> bool {
+    true
 }
 
 impl Default for MouseTrigger {
@@ -32,7 +37,7 @@ impl Default for MouseTrigger {
         Self {
             button: MouseButton::X2,
             modifiers: Vec::new(),
-            swallow: false,
+            swallow: swallow_by_default(),
         }
     }
 }
