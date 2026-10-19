@@ -1,5 +1,7 @@
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 
+use crate::platform;
+
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 const SETTINGS_ENTRY: &str = "settings/index.html";
 
@@ -28,6 +30,16 @@ fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .min_inner_size(640.0, 420.0)
         .center()
         .build()?;
+
+    // The taskbar shows the window's large icon if it has one, and otherwise the shell's
+    // (possibly stale) cached icon for the exe path.
+    if let Err(error) = window
+        .hwnd()
+        .map_err(|error| error.to_string())
+        .and_then(|hwnd| platform::set_large_window_icon(hwnd.0))
+    {
+        tracing::warn!(%error, "could not set the settings window's taskbar icon");
+    }
 
     // Closing hides instead of destroying: reopening is instant and the app keeps running.
     let handle = window.clone();
