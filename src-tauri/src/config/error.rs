@@ -15,4 +15,6 @@ pub enum ConfigError {
     DuplicateModifier(Modifier),
     #[error("keyboard trigger shortcut must not be empty")]
     EmptyShortcut,
+    #[error("{0}")]
+    Rule(String),
 }

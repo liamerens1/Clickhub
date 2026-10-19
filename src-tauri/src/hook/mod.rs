@@ -17,7 +17,7 @@ mod thread;
 mod watchdog;
 
 pub use error::HookError;
-pub use event::{ButtonAction, HookEvent};
+pub use event::{ButtonAction, HookEvent, HookEventKind};
 pub use shared::SHARED;
 pub use thread::HookThread;
 pub use watchdog::Watchdog;

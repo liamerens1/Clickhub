@@ -1,0 +1,93 @@
+/*
+ * The approved spoke ring: no backgrounds, no borders, plain 1px lines and plain text.
+ * The window is transparent and click-through; only `transform` and `opacity` ever animate.
+ */
+:root {
+  --ch-ink: #1a1a1a;
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ch-ink: #f2f2f2;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+}
+
+.ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  color: var(--ch-ink);
+  will-change: transform, opacity;
+}
+
+/* Startup pre-warm: full styling, imperceptible. */
+.ring.prewarm {
+  opacity: 0.002 !important;
+}
+
+.line {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 1px;
+  background: currentColor;
+  transform-origin: 0 50%;
+  will-change: transform, opacity;
+}
+
+/* Rendered at the full zoom size (14px x 1.32) and scaled down at rest, so zoom stays crisp. */
+.label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 18.5px;
+  font-weight: 400;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  will-change: transform, opacity;
+}
+
+.centre {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  white-space: nowrap;
+  opacity: 0;
+  will-change: opacity;
+}
+
+/* Ink chosen per element from the screen behind it (falls back to the theme colour above). */
+.ink-dark {
+  color: #1a1a1a;
+}
+
+.ink-light {
+  color: #f2f2f2;
+}
+
+.centre-name {
+  font-size: 16px;
+  font-weight: 400;
+}
+
+.centre-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.55;
+}
