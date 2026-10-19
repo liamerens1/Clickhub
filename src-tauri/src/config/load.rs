@@ -6,16 +6,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::{Config, parse};
 
 pub const CONFIG_FILE: &str = "config.json";
-const LAST_GOOD_FILE: &str = "config.last-good.json";
+pub(super) const LAST_GOOD_FILE: &str = "config.last-good.json";
 
 /// The config to run with, plus how it was obtained so the caller can report it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Loaded {
     pub config: Config,
     pub status: LoadStatus,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadStatus {
     /// `config.json` was read and is valid.
     Loaded,
@@ -84,7 +84,8 @@ fn write_default(dir: &Path, path: &Path) -> Result<(), String> {
     fs::write(path, json + "\n").map_err(|e| format!("could not write {}: {e}", path.display()))
 }
 
-fn back_up(dir: &Path, path: &Path) -> Option<PathBuf> {
+/// Copies the file at `path` to `config.invalid-<unix-seconds>.json` and returns the copy.
+pub(super) fn back_up(dir: &Path, path: &Path) -> Option<PathBuf> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
