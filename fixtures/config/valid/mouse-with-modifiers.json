@@ -1,0 +1,4 @@
+{
+  "version": 1,
+  "trigger": { "kind": "mouse", "button": "right", "modifiers": ["ctrl", "shift"], "swallow": true }
+}

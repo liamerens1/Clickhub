@@ -19,8 +19,20 @@ fn every_menu_id_maps_back_to_its_action() {
 }
 
 #[test]
-fn pause_is_disabled_until_phase_1() {
-    assert!(!MenuAction::Pause.enabled());
-    assert!(MenuAction::OpenSettings.enabled());
-    assert!(MenuAction::Quit.enabled());
+fn pause_label_reflects_state() {
+    assert_eq!(MenuAction::pause_label(false), "Pause");
+    assert_eq!(MenuAction::pause_label(true), "Resume");
+    assert_eq!(MenuAction::Pause.label(), "Pause");
+}
+
+#[test]
+fn only_the_debug_aids_are_debug_items() {
+    let debug: Vec<MenuAction> = MenuAction::ALL
+        .into_iter()
+        .filter(|action| action.is_debug())
+        .collect();
+    assert_eq!(
+        debug,
+        vec![MenuAction::SimulateHookLoss, MenuAction::StallCore]
+    );
 }
