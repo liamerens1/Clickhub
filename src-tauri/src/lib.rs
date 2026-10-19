@@ -6,6 +6,8 @@
 mod app;
 pub mod config;
 pub mod core;
+mod hook;
+mod platform;
 mod settings;
 pub mod tray;
 
