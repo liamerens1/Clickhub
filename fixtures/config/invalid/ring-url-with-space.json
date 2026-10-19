@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "ring": {
+    "slots": [
+      { "label": "Copy", "action": { "kind": "shortcut", "keys": "Ctrl+C" } },
+      { "label": "X", "action": { "kind": "url", "url": "https://a b" } }
+    ]
+  }
+}

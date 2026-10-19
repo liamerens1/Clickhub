@@ -60,7 +60,7 @@ fn reports_unsupported_version_clearly() {
 }
 
 #[test]
-fn missing_trigger_defaults_to_x2_without_swallowing() {
+fn missing_trigger_defaults_to_x2_with_swallowing() {
     let config = config::parse(r#"{ "version": 1 }"#).expect("minimal config is valid");
     assert_eq!(config, Config::default());
     assert_eq!(
@@ -68,9 +68,81 @@ fn missing_trigger_defaults_to_x2_without_swallowing() {
         Trigger::Mouse(MouseTrigger {
             button: MouseButton::X2,
             modifiers: Vec::new(),
-            swallow: false,
+            swallow: true,
         })
     );
+}
+
+#[test]
+fn explicit_swallow_false_is_kept() {
+    let json =
+        r#"{ "version": 1, "trigger": { "kind": "mouse", "button": "x2", "swallow": false } }"#;
+    let config = config::parse(json).expect("valid");
+    assert!(matches!(
+        config.trigger,
+        Trigger::Mouse(MouseTrigger { swallow: false, .. })
+    ));
+}
+
+#[test]
+fn missing_ring_defaults_to_the_everyday_set() {
+    let config = config::parse(r#"{ "version": 1 }"#).expect("minimal config is valid");
+    let labels: Vec<&str> = config
+        .ring
+        .slots
+        .iter()
+        .map(|slot| slot.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Copy",
+            "Paste",
+            "Screenshot",
+            "File Explorer",
+            "Browser",
+            "Show desktop"
+        ]
+    );
+    let hints: Vec<String> = config
+        .ring
+        .slots
+        .iter()
+        .map(|slot| slot.action.hint())
+        .collect();
+    assert_eq!(
+        hints,
+        [
+            "Ctrl+C",
+            "Ctrl+V",
+            "Win+Shift+S",
+            "Open app",
+            "Open link",
+            "Win+D"
+        ]
+    );
+}
+
+#[test]
+fn shortcuts_are_stored_in_canonical_form() {
+    let json = r#"{ "version": 1, "ring": { "slots": [
+        { "label": "A", "action": { "kind": "shortcut", "keys": "control + shift + escape" } },
+        { "label": "B", "action": { "kind": "shortcut", "keys": "win+f12" } } ] } }"#;
+    let config = config::parse(json).expect("valid");
+    let written = serde_json::to_value(&config.ring).expect("serializable");
+    assert_eq!(written["slots"][0]["action"]["keys"], "Ctrl+Shift+Esc");
+    assert_eq!(written["slots"][1]["action"]["keys"], "Win+F12");
+}
+
+#[test]
+fn rule_errors_name_the_slot() {
+    let json = r#"{ "version": 1, "ring": { "slots": [
+        { "label": "A", "action": { "kind": "url", "url": "https://example.com" } },
+        { "label": "B", "action": { "kind": "url", "url": "ftp://example.com" } } ] } }"#;
+    let message = config::parse(json)
+        .expect_err("ftp is rejected")
+        .to_string();
+    assert!(message.contains("slot 2"), "{message}");
 }
 
 #[test]

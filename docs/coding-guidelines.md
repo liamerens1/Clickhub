@@ -17,7 +17,8 @@ boundary, the structure is wrong: discuss it, and update `docs/architecture.md` 
 | `hook/`     | Low-level hooks, hook thread, watchdog                                               | Touch UI, Tauri, IPC, config or files. In the callback: allocate, log, lock for long, block, or do I/O. |
 | `core/`     | Trigger matching, profiles, action resolution                                        | Use Win32, Tauri, threads it doesn't own, or I/O. It is pure logic.                                     |
 | `platform/` | Safe wrappers over Win32 (window styles, monitors, DPI, foreground app, full-screen) | Hold business logic; depend on Tauri.                                                                   |
-| `overlay/`  | Overlay window: create once, move, reveal                                            | Hide, resize or focus the overlay; wait on the frontend in the hot path.                                |
+| `overlay/`  | One overlay per monitor: create once, move within its monitor, emit ring events      | Hide, resize or focus an overlay; move one to another monitor; wait on the page in the hot path.        |
+| `actions/`  | Run fired slot actions on their own thread                                           | Call Win32 directly (go through `platform/`); block the pipeline.                                       |
 | `settings/` | Settings window lifecycle                                                            | Sit on the hot path; call Win32 directly.                                                               |
 | `config/`   | Schema, parse, validate, load/save/backup                                            | Panic on bad input. No other module reads or writes the config file.                                    |
 | `tray/`     | Tray icon and menu, dispatch                                                         | Hold logic beyond dispatching to another module.                                                        |
@@ -33,7 +34,7 @@ boundary, the structure is wrong: discuss it, and update `docs/architecture.md` 
 | Folder      | Does                                   | May never…                                                                                                        |
 | ----------- | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `settings/` | React settings window                  | Import from `overlay/`; call `invoke` directly (use `shared/ipc`); use Node APIs.                                 |
-| `overlay/`  | Vanilla TS ring (Phase 2)              | Import React or `settings/`; await IPC inside a frame; animate anything but `transform`/`opacity`; use Node APIs. |
+| `overlay/`  | Vanilla TS ring                        | Import React or `settings/`; await IPC inside a frame; animate anything but `transform`/`opacity`; use Node APIs. |
 | `shared/`   | Zod schemas, types, typed IPC wrappers | Touch the DOM, import React, have side effects. Only `shared/ipc` imports `@tauri-apps/*`.                        |
 
 - The frontend never calls Win32 and never shells out. Anything OS-level goes through a typed

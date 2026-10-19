@@ -1,15 +1,17 @@
 use std::path::PathBuf;
 use std::sync::mpsc::sync_channel;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tauri::{AppHandle, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_notification::NotificationExt;
 
-use super::pipeline::Pipeline;
+use super::fullscreen_watch::FullscreenWatch;
+use super::pipeline::{Pipeline, PipelineCommand};
 use crate::config::{self, Fallback, LoadStatus, Trigger};
-use crate::core::{PressTracker, TriggerFilter};
+use crate::core::TriggerFilter;
 use crate::hook::{HookThread, SHARED, Watchdog};
-use crate::platform::tick_count_64;
+use crate::overlay::{Overlays, RingView};
 use crate::tray;
 
 /// Hook events buffered between the callback and the pipeline. Preallocated; if it ever fills,
@@ -20,13 +22,14 @@ const STALL_MS: u64 = 5_000;
 /// Owns the background threads and the current config. Managed as Tauri state.
 pub struct Runtime {
     config_dir: PathBuf,
+    overlays: Arc<Overlays>,
     inner: Mutex<Inner>,
-    keyboard_press: Mutex<PressTracker>,
 }
 
 struct Inner {
     hook: Option<HookThread>,
     watchdog: Option<Watchdog>,
+    fullscreen: Option<FullscreenWatch>,
     pipeline: Option<Pipeline>,
     /// A problem that config reloads cannot fix (e.g. the hook could not be installed).
     hook_problem: Option<String>,
@@ -40,11 +43,14 @@ impl Runtime {
     ///
     /// Fails if the config directory cannot be resolved or the pipeline thread cannot start.
     /// A hook that cannot be installed is reported in the tray instead of failing startup.
-    pub fn start(app: &AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn start(
+        app: &AppHandle,
+        overlays: Arc<Overlays>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let config_dir = app.path().app_config_dir()?;
         let (sender, receiver) = sync_channel(EVENT_QUEUE);
         SHARED.heartbeat();
-        let pipeline = Pipeline::spawn(receiver)?;
+        let pipeline = Pipeline::spawn(receiver, Arc::clone(&overlays))?;
 
         let mut hook_problem = None;
         let hook = match HookThread::start(sender) {
@@ -61,23 +67,27 @@ impl Runtime {
                 .inspect_err(|error| tracing::error!(%error, "hook watchdog unavailable"))
                 .ok()
         });
+        let fullscreen = FullscreenWatch::spawn()
+            .inspect_err(|error| tracing::error!(%error, "full-screen detection unavailable"))
+            .ok();
 
         let runtime = Self {
             config_dir,
+            overlays,
             inner: Mutex::new(Inner {
                 hook,
                 watchdog,
+                fullscreen,
                 pipeline: Some(pipeline),
                 hook_problem,
                 config_problem: None,
             }),
-            keyboard_press: Mutex::new(PressTracker::default()),
         };
         runtime.apply_config(app);
         Ok(runtime)
     }
 
-    /// (Re)loads `config.json` and applies the trigger. Never fails: problems are logged and
+    /// (Re)loads `config.json` and applies the trigger and ring. Never fails: problems are logged and
     /// shown in the tray, and the app keeps running on the fallback config.
     pub fn apply_config(&self, app: &AppHandle) {
         let loaded = config::load(&self.config_dir);
@@ -110,16 +120,37 @@ impl Runtime {
             }
         }
 
-        self.lock().config_problem = problem;
+        self.overlays
+            .set_view(RingView::from_ring(&loaded.config.ring));
+        let actions = loaded
+            .config
+            .ring
+            .slots
+            .iter()
+            .map(|slot| slot.action.clone())
+            .collect();
+        tracing::info!(slots = loaded.config.ring.slots.len(), "ring configured");
+        if let LoadStatus::FellBack { error, .. } = &loaded.status {
+            notify(
+                app,
+                "ClickHub config error",
+                &format!(
+                    "{error}. Your file was left unchanged; ClickHub is using the last good config or the defaults."
+                ),
+            );
+        }
+        let mut inner = self.lock();
+        if let Some(pipeline) = &inner.pipeline {
+            pipeline.send(PipelineCommand::SetRing(actions));
+        }
+        inner.config_problem = problem;
+        drop(inner);
         self.show_status(app);
     }
 
     pub fn toggle_pause(&self, app: &AppHandle) {
         let paused = !SHARED.is_paused();
         SHARED.set_paused(paused);
-        if paused {
-            self.keyboard_press().reset();
-        }
         tracing::info!(paused, "trigger pause toggled");
         self.show_status(app);
     }
@@ -134,7 +165,7 @@ impl Runtime {
 
     pub fn stall_core(&self) {
         if let Some(pipeline) = &self.lock().pipeline {
-            pipeline.stall_for(STALL_MS);
+            pipeline.send(PipelineCommand::Stall(STALL_MS));
         }
     }
 
@@ -144,6 +175,9 @@ impl Runtime {
         let mut inner = self.lock();
         if let Some(watchdog) = inner.watchdog.take() {
             watchdog.stop();
+        }
+        if let Some(fullscreen) = inner.fullscreen.take() {
+            fullscreen.stop();
         }
         if let Some(hook) = inner.hook.take() {
             hook.stop();
@@ -166,10 +200,10 @@ impl Runtime {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn keyboard_press(&self) -> MutexGuard<'_, PressTracker> {
-        self.keyboard_press
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+    fn send(&self, command: PipelineCommand) {
+        if let Some(pipeline) = &self.lock().pipeline {
+            pipeline.send(command);
+        }
     }
 }
 
@@ -177,21 +211,12 @@ fn on_keyboard_trigger(app: &AppHandle, state: ShortcutState) {
     let Some(runtime) = app.try_state::<Runtime>() else {
         return;
     };
-    if SHARED.is_paused() {
+    if SHARED.is_paused() || SHARED.is_suppressed() {
         return;
     }
-    let mut tracker = runtime.keyboard_press();
-    match state {
-        ShortcutState::Pressed => {
-            tracker.on_down(tick_count_64());
-            tracing::info!("keyboard trigger pressed");
-        }
-        ShortcutState::Released => {
-            if let Some(press) = tracker.on_up(tick_count_64()) {
-                tracing::info!(kind = ?press.kind, held_ms = press.held_ms, "keyboard trigger released");
-            }
-        }
-    }
+    runtime.send(PipelineCommand::KeyboardTrigger {
+        pressed: state == ShortcutState::Pressed,
+    });
 }
 
 /// Logs how the config was obtained and returns a short tray message for problems.
@@ -229,5 +254,13 @@ fn report_load_status(status: &LoadStatus, dir: &std::path::Path) -> Option<Stri
             );
             Some(format!("config error, using {using} (see log)"))
         }
+    }
+}
+
+/// Shows a Windows notification. Failures are logged only: the tray tooltip still shows the
+/// problem.
+fn notify(app: &AppHandle, title: &str, body: &str) {
+    if let Err(error) = app.notification().builder().title(title).body(body).show() {
+        tracing::warn!(%error, "could not show a notification");
     }
 }
