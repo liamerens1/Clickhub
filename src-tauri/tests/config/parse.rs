@@ -1,10 +1,12 @@
-//! Mirrors `src/config/`. Uses the same fixtures as
+//! Mirrors `src/config/parse.rs`. Uses the same fixtures as
 //! `tests/shared/schema/config-fixtures.test.ts`: both parsers must agree.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use clickhub_lib::config::{self, CONFIG_VERSION};
+use clickhub_lib::config::{
+    self, CONFIG_VERSION, Config, Modifier, MouseButton, MouseTrigger, Trigger,
+};
 
 fn fixtures(kind: &str) -> Vec<PathBuf> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -55,4 +57,39 @@ fn reports_unsupported_version_clearly() {
     let message = error.to_string();
     assert!(message.contains("99"), "{message}");
     assert!(message.contains(&CONFIG_VERSION.to_string()), "{message}");
+}
+
+#[test]
+fn missing_trigger_defaults_to_x2_without_swallowing() {
+    let config = config::parse(r#"{ "version": 1 }"#).expect("minimal config is valid");
+    assert_eq!(config, Config::default());
+    assert_eq!(
+        config.trigger,
+        Trigger::Mouse(MouseTrigger {
+            button: MouseButton::X2,
+            modifiers: Vec::new(),
+            swallow: false,
+        })
+    );
+}
+
+#[test]
+fn reads_modifiers_and_swallow() {
+    let json = r#"{ "version": 1, "trigger": { "kind": "mouse", "button": "right",
+        "modifiers": ["ctrl", "shift"], "swallow": true } }"#;
+    let config = config::parse(json).expect("valid mouse trigger");
+    assert_eq!(
+        config.trigger,
+        Trigger::Mouse(MouseTrigger {
+            button: MouseButton::Right,
+            modifiers: vec![Modifier::Ctrl, Modifier::Shift],
+            swallow: true,
+        })
+    );
+}
+
+#[test]
+fn default_config_round_trips_through_json() {
+    let json = serde_json::to_string(&Config::default()).expect("serializable");
+    assert_eq!(config::parse(&json).expect("re-parses"), Config::default());
 }

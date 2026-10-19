@@ -1,0 +1,1 @@
+{ "version": 1, "trigger": { "kind": "mouse", "button": "x2", "modifiers": ["hyper"] } }

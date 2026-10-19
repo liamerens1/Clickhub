@@ -10,8 +10,30 @@ or open nested rings. Rings can change per app.
 - Auto-disables in full-screen games, with a per-app blocklist.
 - Light, stable and smooth on multi-monitor setups.
 
-> **Status:** Phase 0 (foundation). The app starts in the tray and does nothing else yet. See
-> [docs/roadmap.md](docs/roadmap.md).
+> **Status:** Phase 1 (trigger). The app detects your trigger button and logs it; the ring
+> itself arrives in Phase 2. See [docs/roadmap.md](docs/roadmap.md).
+
+## Configuration
+
+ClickHub reads `%APPDATA%\com.liamerens.clickhub\config.json` and writes a default one on first
+run. Edit it, then choose **Reload config** from the tray menu.
+
+```json
+{
+  "version": 1,
+  "trigger": { "kind": "mouse", "button": "x2", "modifiers": [], "swallow": false }
+}
+```
+
+- `button`: `"right"`, `"middle"`, `"x1"` (Back) or `"x2"` (Forward). The left button is not
+  allowed.
+- `modifiers`: any of `"ctrl"`, `"shift"`, `"alt"`, `"win"`. They must all be held, and no others.
+- `swallow`: `true` hides the trigger click from the app underneath.
+- Keyboard instead: `{ "kind": "keyboard", "shortcut": "Ctrl+Alt+Space" }`.
+
+If the file is invalid, ClickHub keeps running on the last good config, saves a copy of the broken
+file next to it, and says so in the tray tooltip. Logs are in
+`%LOCALAPPDATA%\com.liamerens.clickhub\logs`.
 
 ## Requirements
 
