@@ -47,11 +47,17 @@ pub struct OpenPayload {
     pub spacing: f64,
     /// Stretches lines and labels outward (1.0 normally, more when squeezed).
     pub radius_scale: f64,
-    /// Ink per slot, chosen against the screen behind each label.
-    pub inks: Vec<InkName>,
-    pub centre_ink: InkName,
     /// Wall-clock milliseconds when Rust emitted the event, for latency measurement.
     pub emitted_ms: f64,
+}
+
+/// `ring:ink`: dark or light ink per slot and for the centre, sent shortly after `ring:open`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InkPayload {
+    pub seq: u64,
+    pub inks: Vec<InkName>,
+    pub centre_ink: InkName,
 }
 
 /// Ink as sent to the page.

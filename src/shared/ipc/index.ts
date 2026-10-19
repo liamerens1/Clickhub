@@ -7,6 +7,7 @@ export {
   onRingAim,
   onRingClose,
   onRingConfig,
+  onRingInk,
   onRingOpen,
   type RingAim,
   ringAimSchema,
@@ -14,6 +15,8 @@ export {
   ringCloseSchema,
   type RingConfig,
   ringConfigSchema,
+  type RingInk,
+  ringInkSchema,
   type RingOpen,
   ringOpenSchema,
 } from "./overlay-events";
