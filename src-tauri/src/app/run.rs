@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use tauri::{App, AppHandle, Manager, RunEvent};
 
 use super::runtime::Runtime;
+use crate::overlay::{Overlays, RingView};
 use crate::settings;
 use crate::tray::{self, MenuAction};
 
@@ -28,6 +29,7 @@ pub fn run() {
             settings::open(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         .setup(setup)
         .build(context);
 
@@ -49,9 +51,12 @@ pub fn run() {
 fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let show_debug_items = std::env::var(DEBUG_MENU_ENV).is_ok_and(|value| value == "1");
     tray::build(app.handle(), show_debug_items, on_menu_action)?;
-    let runtime = Runtime::start(app.handle())?;
+    // Overlays are created once, here, and live until exit. They start empty; the runtime
+    // sends the ring contents as soon as it has loaded the config.
+    let overlays = Overlays::create(app.handle(), RingView { slots: Vec::new() })?;
+    let runtime = Runtime::start(app.handle(), overlays)?;
     app.manage(runtime);
-    // Starts hidden: no window exists until the user opens settings.
+    // No window is shown until the user opens settings; the overlays are transparent.
     tracing::info!(show_debug_items, "tray ready");
     Ok(())
 }

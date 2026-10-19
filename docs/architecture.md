@@ -24,10 +24,13 @@ One process. Its threads and windows:
  ├─ Main thread (Tauri / tao event loop)                      (now)
  │   ├─ tray icon + menu                                      (now)
  │   ├─ settings window: WebView2, opaque, created on demand  (now)
- │   └─ overlay window: WebView2, transparent, created once   (Phase 2)
+ │   └─ overlay-0..n: one WebView2 per monitor, transparent,  (now)
+ │       click-through, created once
  ├─ clickhub-hook: SetWindowsHookExW + own message loop       (now)
- ├─ clickhub-pipeline: consumes hook events ("core")          (now)
+ ├─ clickhub-pipeline: hook events → ring session ("core")    (now)
+ ├─ clickhub-actions: runs fired slot actions                 (now)
  ├─ clickhub-watchdog: re-installs dropped hooks              (now)
+ ├─ clickhub-fullscreen: suppresses the trigger in games      (now)
  └─ WebView2 browser/renderer processes (child processes owned by WebView2)
 ```
 
@@ -37,11 +40,16 @@ One process. Its threads and windows:
   installed them, and only while that thread pumps messages, so the thread exists to do exactly
   that. Other threads talk to it with `PostThreadMessageW` (re-install, stop). We do not use
   `rdev`: it can only listen, and we must be able to swallow the trigger click.
-- **Pipeline** (`app/pipeline.rs`, the "core" consumer). Receives hook events, uses the pure
-  logic in `core/` (press tracking, latency stats) and decides what happens. Phase 1 logs taps,
-  holds and latency; Phase 2 opens the ring from here. It checks in (a heartbeat) at least every
-  100 ms, even when idle.
+- **Pipeline** (`app/pipeline.rs`, the "core" consumer). Receives hook events and drives the pure
+  `core::RingSession` (tap/hold state machine) and `core::aim` (direction → slot). It turns the
+  session's effects into overlay events, sets the hook's ring-open flag, and queues fired actions.
+  It checks in (a heartbeat) at least every 100 ms, even when idle, and logs latency summaries.
+- **Actions** (`actions/`). Runs fired slot actions (send shortcut, launch, open URL) on its own
+  thread with COM initialised, so a slow launch never stalls the pipeline.
 - **Watchdog** (`hook/watchdog.rs`, policy in `core/watchdog_policy.rs`). See below.
+- **Full-screen watch** (`app/fullscreen_watch.rs`). Every 250 ms checks whether the foreground
+  app is full-screen (exclusive Direct3D, presentation mode, or a window covering its monitor,
+  excluding the desktop) and sets the hook's suppression flag: the trigger then passes through.
 
 ### How the callback talks to the rest of the app
 
@@ -86,12 +94,43 @@ From physical click to first ring frame, the budget is **16 ms**:
 
 ```
  mouse button down
-   → hook callback (hook thread)        match trigger against a precomputed spec; post a message
-   → core (receives the message)        decide: open ring at (x, y) for profile P
-   → overlay/ (Rust, main thread)       move the overlay window to (x, y); emit `ring:open`
-   → overlay frontend (WebView2)        flip a class / set transform + opacity; ring is already built
-   → first frame on screen
+   → hook callback (hook thread)        match trigger from atomics; swallow; post an event
+   → pipeline (RingSession)             TriggerDown → effect Open { x, y }
+   → overlay/ (Rust)                    move that monitor's overlay within its monitor; emit `ring:open`
+   → overlay page (WebView2)            set the root transform; start the rAF bloom; DOM already built
+   → first frame on screen              page reports `overlay:frame`; Rust logs hook→emit and emit→frame
 ```
+
+**Edge-aware layout.** On open, `core::layout` checks which directions leave room for a label
+inside the overlay window (which itself lies inside the monitor), using the widest label the page
+measured (`overlay:extent`). With room all round the ring is normal; near an edge or corner the
+slots spread evenly over the largest free arc, clockwise order kept and the cut on the blocked
+side, and the ring grows (lines and labels reach up to 1.6x further; the empty centre stays the
+same) when that gives neighbouring labels more room. Only labels within ~4.6 degrees of straight
+up or down are centred on their point; the rest hang away from the centre, so neighbours near the
+top or bottom never collide. The centre text shifts just enough to stay inside the window. Rust aims against these angles and sends them in `ring:open`, so what is drawn and what is
+picked always agree; the focus zoom spreads relative to the (possibly tighter) spacing.
+
+**Automatic ink.** Plain text has nothing behind it, so its colour must suit the screen. On open,
+Rust downscales the screen area behind the overlay into a coarse brightness grid with one GDI
+`StretchBlt` (`platform::sample_luma`; nothing is stored) and picks dark or light ink per slot
+from the area under each label, plus one for the centre (`core::ring_ink`). Reading screen pixels
+back from the compositor is slow (6-11 ms, measured live), so it is **off the hot path**: the
+ring opens at once in the theme colour, and the `clickhub-ink` thread (`overlay::InkWorker`) sends
+`ring:ink` about 10 ms later, while the lines have barely started growing and well before any
+label pops in. The sampling time is logged per open (`ring ink`, `sample_us`). If sampling fails
+the theme colour stays.
+
+**Staying on top.** Each open re-asserts the overlay as topmost, and while a ring is open the
+pipeline re-asserts it every 100 ms, so switching apps (Alt+Tab) cannot bury it under another
+always-on-top window.
+
+While the ring is open the hook also posts mouse moves; the pipeline computes the aim from the
+offset to the ring centre and emits `ring:aim` at most every 4 ms (immediately when the focused
+slot changes, with a trailing update for the exact final position). The page eases every slot
+toward its focus weight in one `requestAnimationFrame` loop, so the zoom starts on the next frame.
+Clicks and Esc while open are swallowed by the hook and become session inputs; the session fires
+the aimed slot or closes. All overlay events are fire-and-forget: Rust never waits on the page.
 
 Rules that keep it fast:
 
@@ -101,20 +140,22 @@ Rules that keep it fast:
   precomputed state (`return 1` vs `CallNextHookEx`).
 - **No IPC round trip on the path.** The Rust side sends one fire-and-forget event; it never waits
   for the frontend to answer before the frame.
-- **The ring is pre-rendered.** When the active profile changes, the overlay frontend builds the
-  ring DOM ahead of time. The trigger only positions and reveals it.
+- **The ring is pre-rendered.** On `ring:config` (startup and config reload) the page builds the
+  ring DOM and pre-warms it with one invisible open. The trigger only positions and reveals it.
 - **Animate only `transform` and `opacity`.** These run on the compositor without layout or paint.
 
 ## Why the overlay is never hidden
 
-The overlay window is created **once** at startup and is **never hidden, never resized and never
-focused**. When idle it is fully transparent and click-through. This is deliberate:
+There is one overlay window per monitor, each created **once** at startup and **never hidden, never
+resized, never focused and never moved to another monitor**. It is always transparent and
+click-through. This is deliberate:
 
 - **Showing a hidden WebView2 window is slow and ugly.** WebView2 throttles hidden windows: timers
   and `requestAnimationFrame` slow down and the compositor parks the surface. On show, it can flash
   the last stale frame and then play the open animation throttled. An always-present, transparent
   window is already "warm": the first frame after the trigger is a normal frame.
-- **Background throttling is turned off** for the overlay for the same reason.
+- **It is never throttled.** Tauri's `background_throttling` option is unsupported on Windows, but
+  it is not needed: a never-hidden, always-on-top window stays `visible` to WebView2.
 - **It is ring-sized, not full-screen.** Transparent WebView2 windows use per-pixel alpha
   composition, and its cost scales with the window area. A ring-sized window is cheap; a
   full-screen transparent window across a 4K monitor is not.
@@ -123,8 +164,10 @@ focused**. When idle it is fully transparent and click-through. This is delibera
 - **It never takes focus** (`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`). If the ring took focus, a "send
   shortcut" action would go to the ring instead of the app the user was working in. It also never
   shows in the taskbar or Alt-Tab.
-- **Idle means click-through** (`WS_EX_TRANSPARENT` / ignore-cursor-events), so the invisible
-  window never blocks clicks.
+- **Always click-through** (ignore-cursor-events), even while the ring is open. Aim and clicks come
+  from the low-level hook, so the window never needs mouse input and never blocks a click.
+- **Created hidden exactly once.** Each overlay is built hidden, moved onto its monitor, sized at
+  that monitor's DPI, made no-activate, then shown, and never hidden again.
 
 ### Spike verdict and mixed DPI
 
@@ -141,11 +184,12 @@ Two rules came out of it:
   includes Chromium restarting its frame loop and reports a false "dropped" frame.
 
 When a per-monitor-DPI-aware window moves onto a monitor with a different scale factor, Windows
-resizes it, which breaks "never resize". The reference machine has no mixed DPI, so this was not
-measured. The plan for Phase 2 is **one pre-created overlay per monitor**, each sized once at its
-own DPI and never moved off its monitor. That removes cross-monitor DPI changes by construction, at
-the cost of one extra WebView2 per extra monitor. Phase 2 verifies it with one monitor temporarily
-at 125%.
+resizes it, which breaks "never resize". So Phase 2 uses **one pre-created overlay per monitor**
+(`overlay::Overlays`), each sized once at its own DPI and only moved within its own monitor: the
+ring opens in the overlay of the monitor under the cursor, positioned so the ring centre lands on
+the cursor (clamped to the monitor; the page draws the ring at the given centre). That removes
+cross-monitor DPI changes by construction, at the cost of one extra WebView2 per extra monitor.
+Monitors connected after startup get no overlay until restart (Phase 7 handles hot-plug).
 
 ## The settings window
 
@@ -157,33 +201,42 @@ at 125%.
 
 ## Rust module map (`src-tauri/src/`)
 
-| Module      | Role                                                                                                                                               | Status                         |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| `lib.rs`    | Declares modules, re-exports `run`. No logic.                                                                                                      | now                            |
-| `app/`      | Startup, file logging, the event pipeline, the runtime that owns background threads, shutdown.                                                     | now                            |
-| `tray/`     | Tray icon and menu; maps clicks to actions and shows status (Pause/Resume, tooltip).                                                               | now                            |
-| `settings/` | Settings window lifecycle (create, reveal, hide-on-close).                                                                                         | now                            |
-| `config/`   | Config schema, parsing, validation, load with last-good fallback and backup of broken files.                                                       | now                            |
-| `hook/`     | The only place with Win32 hook code. Hook thread, callbacks, shared atomics, watchdog thread.                                                      | now                            |
-| `core/`     | Trigger matching, press tracking, latency stats, watchdog policy; later profiles and actions. Pure logic.                                          | now                            |
-| `platform/` | Thin safe wrappers over other Win32: clocks, input state, foreground app and elevation; later window styles, monitors, DPI, full-screen detection. | now (clocks, keys, foreground) |
-| `overlay/`  | Overlay window lifecycle: create once, move, reveal.                                                                                               | Phase 2                        |
-| `ipc/`      | Tauri commands and event names. Validates payloads, delegates.                                                                                     | Phase 2–3                      |
+| Module      | Role                                                                                                                                              | Status  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `lib.rs`    | Declares modules, re-exports `run`. No logic.                                                                                                     | now     |
+| `app/`      | Startup, file logging, the event pipeline, the runtime that owns background threads, shutdown.                                                    | now     |
+| `tray/`     | Tray icon and menu; maps clicks to actions and shows status (Pause/Resume, tooltip).                                                              | now     |
+| `settings/` | Settings window lifecycle (create, reveal, hide-on-close).                                                                                        | now     |
+| `config/`   | Config schema, parsing, validation, load with last-good fallback and backup of broken files.                                                      | now     |
+| `hook/`     | The only place with Win32 hook code. Hook thread, callbacks, shared atomics, watchdog thread.                                                     | now     |
+| `core/`     | Trigger matching, press tracking, ring aim and tap/hold session, latency stats, watchdog policy. Pure logic.                                      | now     |
+| `platform/` | Thin safe wrappers over other Win32: clocks, input state, `SendInput`, `ShellExecuteW`, foreground app and elevation, full-screen, window styles. | now     |
+| `overlay/`  | One overlay window per monitor: create once, move within its monitor, emit ring events, log frame latency.                                        | now     |
+| `actions/`  | Runs fired slot actions on a dedicated thread through `platform/`.                                                                                | now     |
+| `ipc/`      | Tauri commands for the settings window. Validates payloads, delegates.                                                                            | Phase 3 |
 
 `unsafe` is denied crate-wide. `hook/` and `platform/` opt back in with `#![allow(unsafe_code)]`.
 That keeps every unsafe block in two reviewable places.
 
 ## Frontend map (`src/`)
 
-| Folder      | Role                                                             | Status       |
-| ----------- | ---------------------------------------------------------------- | ------------ |
-| `settings/` | React + TS. Vite entry `settings/index.html`.                    | now          |
-| `shared/`   | Zod schemas (mirroring Rust serde types) and typed IPC wrappers. | now (schema) |
-| `overlay/`  | Vanilla TS, no framework. Vite entry `overlay/index.html`.       | Phase 2      |
+| Folder      | Role                                                                                                                                                                    | Status |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `settings/` | React + TS. Vite entry `settings/index.html`.                                                                                                                           | now    |
+| `shared/`   | Zod schemas (mirroring Rust serde types) and typed IPC wrappers (`shared/ipc`, the only code importing `@tauri-apps/*`).                                                | now    |
+| `overlay/`  | Vanilla TS ring: `motion.ts` (pure easing, bloom, focus weights), `ring-view.ts` (DOM build + transform writes), `ring-animator.ts` (the rAF loop), `main.ts` (events). | now    |
 
-The overlay is vanilla TS on purpose: no framework runtime, no virtual-DOM reconciliation on
-pointer moves. Hover is a direct class or transform write on the slice the pointer entered, so it
-lands on the same frame. The settings window is a forms-and-lists app where React pays for itself.
+The overlay is vanilla TS on purpose: no framework runtime and no reconciliation on aim changes.
+The approved design (roadmap, Phase 2) is plain 1 px lines and plain text, no backgrounds. Every
+line and label is its own compositor layer (`will-change`); one `requestAnimationFrame` loop eases
+values and writes only `transform` and `opacity`, then stops when nothing moves. Labels are drawn
+at their full zoomed size and scaled down at rest, so zooming never re-rasterizes or blurs text.
+An SVG + CSS-transition mockup of the same design lagged; this structure is the fix.
+
+Overlay events: `ring:config` (slot labels and hints), `ring:open` (centre, seq, emit time),
+`ring:aim` (continuous angle in slot units + nearest slot), `ring:close`; and from the page,
+`overlay:ready` and `overlay:frame` (emit → first frame delay). Payloads are validated with Zod on
+the page; the Rust structs live in `overlay/view.rs`.
 
 ## Config
 

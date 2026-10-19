@@ -5,3 +5,4 @@
 
 mod load;
 mod parse;
+mod shortcut;

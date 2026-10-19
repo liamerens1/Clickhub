@@ -21,8 +21,8 @@ export const mouseTriggerSchema = z
         message: "a modifier is listed more than once",
       })
       .default([]),
-    /** Hide the trigger click from the app underneath. Off by default. */
-    swallow: z.boolean().default(false),
+    /** Hide the trigger click from the app underneath. On by default since Phase 2. */
+    swallow: z.boolean().default(true),
   })
   .strict();
 
@@ -43,7 +43,7 @@ export const DEFAULT_TRIGGER: Trigger = {
   kind: "mouse",
   button: "x2",
   modifiers: [],
-  swallow: false,
+  swallow: true,
 };
 
 export type MouseButton = z.infer<typeof mouseButtonSchema>;
