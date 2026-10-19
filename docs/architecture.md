@@ -25,23 +25,60 @@ One process. Its threads and windows:
  │   ├─ tray icon + menu                                      (now)
  │   ├─ settings window: WebView2, opaque, created on demand  (now)
  │   └─ overlay window: WebView2, transparent, created once   (Phase 2)
- ├─ Hook thread: SetWindowsHookExW + own message loop         (Phase 1)
- ├─ Core: trigger state machine, profiles, actions            (Phase 1+)
- ├─ Watchdog: checks the hook is alive, re-installs it        (Phase 1)
+ ├─ clickhub-hook: SetWindowsHookExW + own message loop       (now)
+ ├─ clickhub-pipeline: consumes hook events ("core")          (now)
+ ├─ clickhub-watchdog: re-installs dropped hooks              (now)
  └─ WebView2 browser/renderer processes (child processes owned by WebView2)
 ```
 
 - **Main thread.** Tauri's event loop. It owns all windows and the tray. It never blocks.
-- **Hook thread (Phase 1).** Installs `WH_MOUSE_LL` and `WH_KEYBOARD_LL` with the raw
+- **Hook thread** (`hook/thread.rs`). Installs `WH_MOUSE_LL` and `WH_KEYBOARD_LL` with the raw
   `SetWindowsHookExW` from the `windows` crate. Low-level hook callbacks run on the thread that
   installed them, and only while that thread pumps messages, so the thread exists to do exactly
-  that. We do not use `rdev`: it can only listen, and we must be able to swallow the trigger click.
-- **Core (Phase 1+).** Turns hook events into decisions: is this the trigger, is it a hold or a
-  tap, is ClickHub paused, is the foreground app full-screen or blocklisted, which ring applies.
-  `core/` is pure logic with no Win32 or Tauri, so it is fully unit-testable.
-- **Watchdog (Phase 1).** Windows silently removes a low-level hook whose callback exceeds
-  `LowLevelHooksTimeout`, without telling the app. The watchdog detects that (heartbeat or probe)
-  and re-installs the hook.
+  that. Other threads talk to it with `PostThreadMessageW` (re-install, stop). We do not use
+  `rdev`: it can only listen, and we must be able to swallow the trigger click.
+- **Pipeline** (`app/pipeline.rs`, the "core" consumer). Receives hook events, uses the pure
+  logic in `core/` (press tracking, latency stats) and decides what happens. Phase 1 logs taps,
+  holds and latency; Phase 2 opens the ring from here. It checks in (a heartbeat) at least every
+  100 ms, even when idle.
+- **Watchdog** (`hook/watchdog.rs`, policy in `core/watchdog_policy.rs`). See below.
+
+### How the callback talks to the rest of the app
+
+The callback is an `extern "system"` function with no user-data pointer, so its state is a
+static (`hook::SHARED`) made only of atomics: the trigger filter (button + modifier bitmask +
+swallow flag), the pause flag, the pipeline heartbeat, last-event ticks, and a ring buffer of
+callback durations. Events go out through a bounded `std::sync::mpsc::sync_channel`, whose buffer
+is preallocated, so `try_send` never allocates or blocks. If the channel is full the event is
+dropped and counted, never waited on.
+
+### Fail open
+
+The callback swallows the trigger click only when **all** of these hold: swallowing is enabled,
+ClickHub is not paused, the button and the exact modifier set match, and the pipeline heartbeat is
+less than 500 ms old. A hung or crashed pipeline therefore stops swallowing within half a second,
+and the click reaches the app underneath. An `Up` is swallowed exactly when its `Down` was, so no
+app ever sees a lone half of a click. Injected (synthetic) input is never matched.
+
+### Watchdog: detecting a silently removed hook
+
+Windows silently removes a low-level hook whose callback exceeds `LowLevelHooksTimeout`, without
+telling the app; the only symptom is that events stop arriving. The watchdog polls every 100 ms
+and compares `GetLastInputInfo` (the newest input Windows saw in the session, from any device) with
+the newest event either hook saw. If Windows saw input the hooks missed by more than 250 ms on
+**two consecutive polls**, it asks the hook thread to re-install, so a real loss is repaired within
+about 0.5 s of the next input. The second poll filters out a callback that merely ran late under
+heavy CPU load and then caught up, which a one-poll check mistook for a loss during the first live
+run (while a Rust build saturated the CPU). The hook thread also runs at
+`THREAD_PRIORITY_HIGHEST`: it is idle except for callbacks, and starvation is exactly what makes
+Windows drop hooks. No synthetic input is needed. The keyboard hook exists mainly for this:
+without it, typing would look like missed mouse input.
+
+Re-installing cannot help when the input went to an elevated window (UIPI hides it from our
+hooks), so repeated re-installs back off exponentially (2 s, doubling, max 30 s) until hook events
+resume. Every re-install logs the foreground app's executable, PID and elevation
+(`platform::foreground_app`), so a log line tells a real drop apart from input to an admin window.
+The decision logic is pure (`core::WatchdogPolicy`) and unit-tested, including tick wraparound.
 
 ## The hot path
 
@@ -89,19 +126,26 @@ focused**. When idle it is fully transparent and click-through. This is delibera
 - **Idle means click-through** (`WS_EX_TRANSPARENT` / ignore-cursor-events), so the invisible
   window never blocks clicks.
 
-### Open question for the Phase 1 spike: mixed DPI
+### Spike verdict and mixed DPI
+
+The Phase 1 spike (full numbers in `docs/roadmap.md`) found the WebView2 overlay well inside the
+targets: emit → first frame callback p99 2.3 ms, zero dropped frames in 10,875 at ~178 Hz, and the
+page stays `visible` (never throttled) while idle and transparent. **Decision: go.** No native
+Direct2D overlay is needed.
+
+Two rules came out of it:
+
+- **Pre-warm at startup.** The first reveal after launch is a cold start (78–94 ms). One invisible
+  reveal at startup (full styling at `opacity: 0.002`) brings it to about 2 ms.
+- **Measure symmetrically.** A frame-interval measurement that starts while the page is idle
+  includes Chromium restarting its frame loop and reports a false "dropped" frame.
 
 When a per-monitor-DPI-aware window moves onto a monitor with a different scale factor, Windows
-resizes it. That breaks "never resize" on mixed-DPI setups. The spike measures two candidates and
-records the decision in `docs/roadmap.md`:
-
-1. **One overlay per monitor:** each created once at its monitor's DPI and never moved off it. It
-   costs one WebView2 per monitor in memory.
-2. **One overlay that handles `WM_DPICHANGED` itself:** keeps its physical size fixed and scales
-   the ring in CSS.
-
-If WebView2 cannot hit the smoothness targets at all, the fallback is a native overlay (Direct2D /
-Windows Composition) with Tauri kept for settings. That is decided before Phase 2.
+resizes it, which breaks "never resize". The reference machine has no mixed DPI, so this was not
+measured. The plan for Phase 2 is **one pre-created overlay per monitor**, each sized once at its
+own DPI and never moved off its monitor. That removes cross-monitor DPI changes by construction, at
+the cost of one extra WebView2 per extra monitor. Phase 2 verifies it with one monitor temporarily
+at 125%.
 
 ## The settings window
 
@@ -113,18 +157,18 @@ Windows Composition) with Tauri kept for settings. That is decided before Phase 
 
 ## Rust module map (`src-tauri/src/`)
 
-| Module      | Role                                                                                                      | Status       |
-| ----------- | --------------------------------------------------------------------------------------------------------- | ------------ |
-| `lib.rs`    | Declares modules, re-exports `run`. No logic.                                                             | now          |
-| `app/`      | Startup, logging, run loop, shutdown orchestration.                                                       | now          |
-| `tray/`     | Tray icon and menu; dispatches menu actions.                                                              | now          |
-| `settings/` | Settings window lifecycle (create, reveal, hide-on-close).                                                | now          |
-| `config/`   | Config schema, parsing and validation; later load/save/backup.                                            | now (schema) |
-| `hook/`     | The only place with Win32 hook code. Hook thread, callback, watchdog.                                     | Phase 1      |
-| `core/`     | Trigger matching, profiles, action resolution. Pure logic.                                                | Phase 1      |
-| `platform/` | Thin safe wrappers over other Win32: window styles, monitors, DPI, foreground app, full-screen detection. | Phase 1–2    |
-| `overlay/`  | Overlay window lifecycle: create once, move, reveal.                                                      | Phase 2      |
-| `ipc/`      | Tauri commands and event names. Validates payloads, delegates.                                            | Phase 2–3    |
+| Module      | Role                                                                                                                                               | Status                         |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `lib.rs`    | Declares modules, re-exports `run`. No logic.                                                                                                      | now                            |
+| `app/`      | Startup, file logging, the event pipeline, the runtime that owns background threads, shutdown.                                                     | now                            |
+| `tray/`     | Tray icon and menu; maps clicks to actions and shows status (Pause/Resume, tooltip).                                                               | now                            |
+| `settings/` | Settings window lifecycle (create, reveal, hide-on-close).                                                                                         | now                            |
+| `config/`   | Config schema, parsing, validation, load with last-good fallback and backup of broken files.                                                       | now                            |
+| `hook/`     | The only place with Win32 hook code. Hook thread, callbacks, shared atomics, watchdog thread.                                                      | now                            |
+| `core/`     | Trigger matching, press tracking, latency stats, watchdog policy; later profiles and actions. Pure logic.                                          | now                            |
+| `platform/` | Thin safe wrappers over other Win32: clocks, input state, foreground app and elevation; later window styles, monitors, DPI, full-screen detection. | now (clocks, keys, foreground) |
+| `overlay/`  | Overlay window lifecycle: create once, move, reveal.                                                                                               | Phase 2                        |
+| `ipc/`      | Tauri commands and event names. Validates payloads, delegates.                                                                                     | Phase 2–3                      |
 
 `unsafe` is denied crate-wide. `hook/` and `platform/` opt back in with `#![allow(unsafe_code)]`.
 That keeps every unsafe block in two reviewable places.
@@ -151,7 +195,33 @@ lands on the same frame. The settings window is a forms-and-lists app where Reac
   drift. A real example: serde's derived `Deserialize` accepts a JSON array as a struct, and the
   parity test caught it on day one.
 - A top-level `version` field allows migrations.
-- Invalid config never crashes the app (see `CLAUDE.md` hard rule 9).
+- Invalid config never crashes the app (see `CLAUDE.md` hard rule 9). `config::load`:
+  - no file → writes the defaults and uses them;
+  - valid file → uses it and saves a copy as `config.last-good.json`;
+  - invalid or unreadable file → copies it to `config.invalid-<unix-seconds>.json`, **leaves the
+    original untouched** so the user can fix it, and runs on the last good config (or defaults).
+    The tray tooltip says so and the log has the exact error.
+- Tray **Reload config** re-reads the file without restarting.
+- The trigger is `{ "kind": "mouse", "button", "modifiers", "swallow" }` or
+  `{ "kind": "keyboard", "shortcut" }`. `left` is not an allowed button, so a bad config can never
+  take over the primary button. Keyboard chords go through `tauri-plugin-global-shortcut`
+  (`RegisterHotKey`), not the low-level hook.
+
+## Logs
+
+Daily files at `%LOCALAPPDATA%\com.liamerens.clickhub\logs\clickhub.YYYY-MM-DD.log`, last 7 kept,
+written by a non-blocking background writer. `RUST_LOG` sets the level (default `info`). The
+pipeline logs a latency summary every 100 button events and on exit: delivery latency (callback
+start to pipeline receipt) and callback duration, as p50/p99/max, plus dropped events.
+
+## Debug aids
+
+Launching with `CLICKHUB_DEBUG_MENU=1` adds two tray items used to verify Phase 1 by hand:
+
+- **Debug: simulate hook loss**: removes the hooks without telling the watchdog, exactly as
+  Windows does on a timeout. Moving the mouse afterwards should log a re-install.
+- **Debug: stall core for 5 s**: blocks the pipeline thread. With `swallow: true`, the trigger
+  click must reach the app underneath during the stall (fail open).
 
 ## Known platform constraints
 
