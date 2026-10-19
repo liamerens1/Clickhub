@@ -17,6 +17,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(100);
 /// otherwise send 1000 events a second). A change of focused slot is always sent at once, and a
 /// trailing update lands the exact final position.
 const AIM_INTERVAL: Duration = Duration::from_millis(4);
+/// Button events older than the hook's fail-open window (500 ms without a heartbeat) are
+/// ignored: the hook passed them through to the apps, so they are not ring input any more.
+const STALE_EVENT_US: u64 = 500_000;
 /// While a ring is open it is re-asserted on top this often.
 const ON_TOP_INTERVAL_US: u64 = 100_000;
 /// Log a latency summary every this many button events.
@@ -188,6 +191,12 @@ impl Worker {
                 swallowed,
             } => {
                 let latency_us = qpc_to_micros(qpc_now() - event.qpc);
+                if latency_us > STALE_EVENT_US {
+                    // Queued while the pipeline was stalled. The hook already let these clicks
+                    // through (fail open), so acting on them now would open a ring seconds late.
+                    tracing::debug!(latency_us, "dropping a stale button event");
+                    return;
+                }
                 self.delivery.record(latency_us);
                 self.button_events += 1;
                 if self.button_events.is_multiple_of(SUMMARY_EVERY) {

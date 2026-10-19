@@ -60,15 +60,14 @@ export function maxLabelWidth(nodes: SlotNodes[]): number {
 }
 
 /**
- * Places each slot at `angles[i]` with ink `inks[i]` for this open. Labels on the right hang to
- * the right of their point, labels on the left to the left, and only near-vertical ones are
- * centred. Runs once per open.
+ * Places each slot at `angles[i]` for this open. Labels on the right hang to the right of their
+ * point, labels on the left to the left, and only near-vertical ones are centred. Clears any ink
+ * from the previous open (the theme colour applies until `ring:ink` arrives). Runs once per open.
  */
 export function placeSlots(
   nodes: SlotNodes[],
   angles: readonly number[],
   radiusScale: number,
-  inks: readonly Ink[],
 ): void {
   for (const [index, slot] of nodes.entries()) {
     const angle = angles[index] ?? 0;
@@ -78,11 +77,25 @@ export function placeSlots(
     slot.radiusScale = radiusScale;
     slot.anchorPercent = Math.abs(slot.dx) < GEOMETRY.centredBelow ? -50 : slot.dx > 0 ? 0 : -100;
     slot.label.style.transformOrigin = `${String(-slot.anchorPercent)}% 50%`;
-    const ink = inks[index] ?? "light";
     for (const element of [slot.line, slot.label]) {
-      element.classList.toggle("ink-dark", ink === "dark");
-      element.classList.toggle("ink-light", ink === "light");
+      element.classList.remove("ink-dark", "ink-light");
     }
+  }
+}
+
+/** Applies dark or light ink to `element`. */
+export function applyInk(element: HTMLElement, ink: Ink): void {
+  element.classList.toggle("ink-dark", ink === "dark");
+  element.classList.toggle("ink-light", ink === "light");
+}
+
+/** Applies `inks[i]` to slot `i`'s line and label. */
+export function inkSlots(nodes: SlotNodes[], inks: readonly Ink[]): void {
+  for (const [index, slot] of nodes.entries()) {
+    const ink = inks[index];
+    if (ink === undefined) continue;
+    applyInk(slot.line, ink);
+    applyInk(slot.label, ink);
   }
 }
 

@@ -11,7 +11,15 @@ import {
   focusWeight,
   smoothing,
 } from "./motion";
-import { buildRing, maxLabelWidth, paintSlot, placeSlots, type SlotNodes } from "./ring-view";
+import {
+  applyInk,
+  buildRing,
+  inkSlots,
+  maxLabelWidth,
+  paintSlot,
+  placeSlots,
+  type SlotNodes,
+} from "./ring-view";
 
 /** Focus zoom follows the aim with this time constant (approved in the mockup). */
 const FOCUS_TAU_MS = 55;
@@ -78,8 +86,6 @@ export class RingAnimator {
     angles: readonly number[],
     spacing: number,
     radiusScale: number,
-    inks: readonly Ink[],
-    centreInk: Ink,
     onFirstFrame?: () => void,
   ): void {
     this.root.style.transform = `translate(${cx.toFixed(1)}px, ${cy.toFixed(1)}px)`;
@@ -89,13 +95,8 @@ export class RingAnimator {
       this.slots.map((slot) => slot.nodes),
       angles,
       radiusScale,
-      inks,
     );
-    const centre = this.centreName.parentElement;
-    if (centre !== null) {
-      centre.classList.toggle("ink-dark", centreInk === "dark");
-      centre.classList.toggle("ink-light", centreInk === "light");
-    }
+    this.centreName.parentElement?.classList.remove("ink-dark", "ink-light");
     this.spacing = spacing;
     let maxOrder = 0;
     for (const slot of this.slots) {
@@ -113,6 +114,16 @@ export class RingAnimator {
       requestAnimationFrame(() => {
         onFirstFrame();
       });
+  }
+
+  /** Applies the inks Rust picked for this open (they arrive shortly after the open). */
+  ink(inks: readonly Ink[], centreInk: Ink): void {
+    inkSlots(
+      this.slots.map((slot) => slot.nodes),
+      inks,
+    );
+    const centre = this.centreName.parentElement;
+    if (centre !== null) applyInk(centre, centreInk);
   }
 
   aim(angle: number, nearest: number | null): void {
@@ -141,8 +152,6 @@ export class RingAnimator {
       this.slots.map((_, index) => index * spacing),
       spacing,
       1,
-      this.slots.map(() => "light"),
-      "light",
     );
     window.setTimeout(() => {
       this.close();

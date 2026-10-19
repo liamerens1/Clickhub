@@ -7,6 +7,7 @@ import {
   onRingAim,
   onRingClose,
   onRingConfig,
+  onRingInk,
   onRingOpen,
 } from "../shared/ipc";
 
@@ -38,18 +39,13 @@ await onRingConfig((config) => {
 
 await onRingOpen((open) => {
   openSeq = open.seq;
-  animator.open(
-    open.cx,
-    open.cy,
-    open.angles,
-    open.spacing,
-    open.radiusScale,
-    open.inks,
-    open.centreInk,
-    () => {
-      void emitOverlayFrame(open.seq, Date.now() - open.emittedMs);
-    },
-  );
+  animator.open(open.cx, open.cy, open.angles, open.spacing, open.radiusScale, () => {
+    void emitOverlayFrame(open.seq, Date.now() - open.emittedMs);
+  });
+});
+
+await onRingInk((ink) => {
+  if (ink.seq === openSeq) animator.ink(ink.inks, ink.centreInk);
 });
 
 await onRingAim((aim) => {

@@ -8,21 +8,15 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
-use super::{AimPayload, ClosePayload, InkName, OpenPayload, RingView};
-use crate::core::{
-    Aim, CENTRE_SAMPLE_POINTS, Ink, Layout, Room, average_brightness, ink_for, label_sample_points,
-    layout,
-};
-use crate::platform::{
-    LumaGrid, keep_on_top, make_overlay_window, place_overlay, qpc_now, qpc_to_micros, sample_luma,
-};
+use super::ink_worker::{InkJob, InkWorker};
+use super::{AimPayload, ClosePayload, OpenPayload, RingView};
+use crate::core::{Aim, Layout, Room, layout};
+use crate::platform::{keep_on_top, make_overlay_window, place_overlay, qpc_now, qpc_to_micros};
 
 /// Widest label at full zoom, in CSS pixels, until the page measures the real one.
 const DEFAULT_LABEL_WIDTH: f64 = 160.0;
 /// Labels are measured at full zoom; at rest they are this much smaller (`maxZoom` in the page).
 const MAX_ZOOM: f64 = 1.32;
-/// Brightness sampling grid cell size, in physical pixels.
-const SAMPLE_CELL_PX: i32 = 20;
 
 /// Overlay window size in CSS pixels: room for labels left and right of a ~150 px ring plus the
 /// focus zoom. Never changes after creation.
@@ -38,6 +32,7 @@ pub struct Overlays {
     view: Mutex<RingView>,
     open: Mutex<Option<OpenRing>>,
     seq: AtomicU64,
+    ink: InkWorker,
 }
 
 struct OverlayWindow {
@@ -64,7 +59,6 @@ struct OpenRing {
     seq: u64,
     window: usize,
     hook_to_emit_us: u64,
-    sample_us: u64,
 }
 
 #[derive(Deserialize)]
@@ -158,6 +152,7 @@ impl Overlays {
             view: Mutex::new(view),
             open: Mutex::new(None),
             seq: AtomicU64::new(0),
+            ink: InkWorker::spawn()?,
         });
         overlays.listen(app);
         Ok(overlays)
@@ -245,14 +240,6 @@ impl Overlays {
         let label_width = *lock(&overlay.label_width);
         let ring_layout = layout(slot_count, room, label_width);
 
-        // Pick dark or light ink per slot from the screen behind the ring (the overlay itself is
-        // transparent at this moment). Falls back to light ink if sampling fails.
-        let sample_started = qpc_now();
-        let grid = sample_luma(wx, wy, w, h, cells(w), cells(h));
-        let sample_us = qpc_to_micros(qpc_now() - sample_started);
-        let (inks, centre_ink) =
-            choose_inks(grid.as_ref(), room, &ring_layout, label_width / MAX_ZOOM);
-
         let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let payload = OpenPayload {
             seq,
@@ -261,8 +248,6 @@ impl Overlays {
             angles: ring_layout.angles.clone(),
             spacing: ring_layout.spacing,
             radius_scale: ring_layout.radius_scale,
-            inks,
-            centre_ink,
             emitted_ms: epoch_ms(),
         };
         if let Err(error) = overlay
@@ -276,7 +261,17 @@ impl Overlays {
             seq,
             window: index,
             hook_to_emit_us,
-            sample_us,
+        });
+        // Ink comes from the screen behind the ring, which is slow to read back, so it follows
+        // the open instead of delaying it (see InkWorker).
+        self.ink.request(InkJob {
+            seq,
+            window: overlay.window.clone(),
+            label: overlay.label.clone(),
+            rect: (wx, wy, w, h),
+            room,
+            layout: ring_layout.clone(),
+            label_width: label_width / MAX_ZOOM,
         });
         Some(Opened {
             scale,
@@ -336,7 +331,6 @@ impl Overlays {
         tracing::info!(
             seq = frame.seq,
             hook_to_emit_us = open.map(|open| open.hook_to_emit_us),
-            sample_us = open.map(|open| open.sample_us),
             emit_to_frame_ms = format!("{:.2}", frame.emit_to_frame_ms),
             "ring opened"
         );
@@ -366,40 +360,4 @@ fn epoch_ms() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0.0, |elapsed| elapsed.as_secs_f64() * 1_000.0)
-}
-
-/// Grid cells along a side of `pixels` physical pixels.
-fn cells(pixels: i32) -> usize {
-    usize::try_from((pixels / SAMPLE_CELL_PX).max(4)).unwrap_or(4)
-}
-
-/// Ink per slot and for the centre text. `room` doubles as the centre's position in the window
-/// (CSS px); `label_width` is a resting label's width.
-fn choose_inks(
-    grid: Option<&LumaGrid>,
-    room: Room,
-    ring: &Layout,
-    label_width: f64,
-) -> (Vec<InkName>, InkName) {
-    let Some(grid) = grid else {
-        let fallback = InkName::from(Ink::Light);
-        return (vec![fallback; ring.angles.len()], fallback);
-    };
-    let width = room.left + room.right;
-    let height = room.top + room.bottom;
-    let brightness_at =
-        |dx: f64, dy: f64| grid.at((room.left + dx) / width, (room.top + dy) / height);
-    let inks = ring
-        .angles
-        .iter()
-        .map(|&angle| {
-            let points = label_sample_points(angle, ring.radius_scale, label_width);
-            InkName::from(ink_for(average_brightness(&points, brightness_at)))
-        })
-        .collect();
-    let centre = InkName::from(ink_for(average_brightness(
-        &CENTRE_SAMPLE_POINTS,
-        brightness_at,
-    )));
-    (inks, centre)
 }

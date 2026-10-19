@@ -23,10 +23,14 @@ export const ringOpenSchema = z.object({
   spacing: z.number().positive(),
   /** Stretches lines and labels outward (1 normally, more when squeezed near an edge). */
   radiusScale: z.number().positive(),
-  /** Ink per slot, chosen by Rust against the screen behind each label. */
+  emittedMs: z.number(),
+});
+
+/** Sent ~10 ms after `ring:open`: ink per slot, chosen against the screen behind each label. */
+export const ringInkSchema = z.object({
+  seq: z.number().int(),
   inks: z.array(inkSchema),
   centreInk: inkSchema,
-  emittedMs: z.number(),
 });
 
 export const ringAimSchema = z.object({
@@ -45,6 +49,7 @@ export type Ink = z.infer<typeof inkSchema>;
 export type RingConfig = z.infer<typeof ringConfigSchema>;
 export type RingOpen = z.infer<typeof ringOpenSchema>;
 export type RingAim = z.infer<typeof ringAimSchema>;
+export type RingInk = z.infer<typeof ringInkSchema>;
 export type RingClose = z.infer<typeof ringCloseSchema>;
 
 /**
@@ -71,6 +76,8 @@ export const onRingConfig = (handler: (config: RingConfig) => void) =>
   onEvent("ring:config", ringConfigSchema, handler);
 export const onRingOpen = (handler: (open: RingOpen) => void) =>
   onEvent("ring:open", ringOpenSchema, handler);
+export const onRingInk = (handler: (ink: RingInk) => void) =>
+  onEvent("ring:ink", ringInkSchema, handler);
 export const onRingAim = (handler: (aim: RingAim) => void) =>
   onEvent("ring:aim", ringAimSchema, handler);
 export const onRingClose = (handler: (close: RingClose) => void) =>

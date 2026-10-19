@@ -114,9 +114,12 @@ picked always agree; the focus zoom spreads relative to the (possibly tighter) s
 **Automatic ink.** Plain text has nothing behind it, so its colour must suit the screen. On open,
 Rust downscales the screen area behind the overlay into a coarse brightness grid with one GDI
 `StretchBlt` (`platform::sample_luma`; nothing is stored) and picks dark or light ink per slot
-from the area under each label, plus one for the centre (`core::ring_ink`). The sampling time is
-logged with each open (`sample_us`) and counts toward the 16 ms budget. If sampling fails the
-page falls back to the Windows light/dark theme colour.
+from the area under each label, plus one for the centre (`core::ring_ink`). Reading screen pixels
+back from the compositor is slow (6-11 ms, measured live), so it is **off the hot path**: the
+ring opens at once in the theme colour, and the `clickhub-ink` thread (`overlay::InkWorker`) sends
+`ring:ink` about 10 ms later, while the lines have barely started growing and well before any
+label pops in. The sampling time is logged per open (`ring ink`, `sample_us`). If sampling fails
+the theme colour stays.
 
 **Staying on top.** Each open re-asserts the overlay as topmost, and while a ring is open the
 pipeline re-asserts it every 100 ms, so switching apps (Alt+Tab) cannot bury it under another
