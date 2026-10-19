@@ -26,7 +26,11 @@ function mockBackend() {
         case "get_status":
           return { paused: false, problem: null };
         case "get_app_info":
-          return { version: "0.3.0", configPath: "config.json", logDir: null };
+          return { version: "0.4.0", installed: false, configPath: "config.json", logDir: null };
+        case "get_autostart":
+          return { available: false, enabled: false };
+        case "get_update_state":
+          return { kind: "idle" };
         default:
           return null;
       }

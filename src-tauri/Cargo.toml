@@ -24,6 +24,7 @@ tauri-plugin-dialog = "=2.8.1"
 tauri-plugin-global-shortcut = "=2.4.1"
 tauri-plugin-notification = "=2.7.0"
 tauri-plugin-single-instance = "=2.5.4"
+tauri-plugin-updater = "=2.13.1"
 thiserror = "=2.0.21"
 tracing = "=0.1.44"
 tracing-appender = "=0.2.5"
@@ -36,6 +37,7 @@ windows = { version = "=0.62.2", features = [
     "Win32_System_LibraryLoader",
     "Win32_Security",
     "Win32_System_Performance",
+    "Win32_System_Registry",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",

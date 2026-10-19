@@ -10,19 +10,20 @@ boundary, the structure is wrong: discuss it, and update `docs/architecture.md` 
 
 ### Rust (`src-tauri/src/`)
 
-| Module      | Does                                                                                 | May never…                                                                                              |
-| ----------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `lib.rs`    | Declares modules, re-exports `run`                                                   | Contain logic.                                                                                          |
-| `app/`      | Startup, logging, run loop, shutdown                                                 | Hold feature logic; call Win32 directly.                                                                |
-| `hook/`     | Low-level hooks, hook thread, watchdog                                               | Touch UI, Tauri, IPC, config or files. In the callback: allocate, log, lock for long, block, or do I/O. |
-| `core/`     | Trigger matching, profiles, action resolution                                        | Use Win32, Tauri, threads it doesn't own, or I/O. It is pure logic.                                     |
-| `platform/` | Safe wrappers over Win32 (window styles, monitors, DPI, foreground app, full-screen) | Hold business logic; depend on Tauri.                                                                   |
-| `overlay/`  | One overlay per monitor: create once, move within its monitor, emit ring events      | Hide, resize or focus an overlay; move one to another monitor; wait on the page in the hot path.        |
-| `actions/`  | Run fired slot actions on their own thread                                           | Call Win32 directly (go through `platform/`); block the pipeline.                                       |
-| `settings/` | Settings window lifecycle                                                            | Sit on the hot path; call Win32 directly.                                                               |
-| `config/`   | Schema, parse, validate, load/save/backup                                            | Panic on bad input. No other module reads or writes the config file.                                    |
-| `tray/`     | Tray icon and menu, dispatch                                                         | Hold logic beyond dispatching to another module.                                                        |
-| `ipc/`      | Tauri commands and event names                                                       | Hold logic; trust a payload before validating it.                                                       |
+| Module       | Does                                                                                 | May never…                                                                                              |
+| ------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `lib.rs`     | Declares modules, re-exports `run`                                                   | Contain logic.                                                                                          |
+| `app/`       | Startup, logging, run loop, shutdown                                                 | Hold feature logic; call Win32 directly.                                                                |
+| `hook/`      | Low-level hooks, hook thread, watchdog                                               | Touch UI, Tauri, IPC, config or files. In the callback: allocate, log, lock for long, block, or do I/O. |
+| `core/`      | Trigger matching, profiles, action resolution                                        | Use Win32, Tauri, threads it doesn't own, or I/O. It is pure logic.                                     |
+| `platform/`  | Safe wrappers over Win32 (window styles, monitors, DPI, foreground app, full-screen) | Hold business logic; depend on Tauri.                                                                   |
+| `overlay/`   | One overlay per monitor: create once, move within its monitor, emit ring events      | Hide, resize or focus an overlay; move one to another monitor; wait on the page in the hot path.        |
+| `actions/`   | Run fired slot actions on their own thread                                           | Call Win32 directly (go through `platform/`); block the pipeline.                                       |
+| `settings/`  | Settings window lifecycle                                                            | Sit on the hot path; call Win32 directly.                                                               |
+| `config/`    | Schema, parse, validate, load/save/backup                                            | Panic on bad input. No other module reads or writes the config file.                                    |
+| `tray/`      | Tray icon and menu, dispatch                                                         | Hold logic beyond dispatching to another module.                                                        |
+| `ipc/`       | Tauri commands and event names                                                       | Hold logic; trust a payload before validating it.                                                       |
+| `lifecycle/` | Start with Windows, updates, uninstall                                               | Sit on the hot path; call Win32 directly; install an update without the user's click.                   |
 
 - `unsafe` is denied crate-wide (`[lints.rust] unsafe_code = "deny"`). Only `hook/` and
   `platform/` opt back in with `#![allow(unsafe_code)]` at the top of their `mod.rs`. Every
