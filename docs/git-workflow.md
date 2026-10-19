@@ -51,6 +51,8 @@ At the end of each phase:
 2. After the phase PR is merged into `dev`, `dev` is merged into `main` and tagged `v0.<phase>.0`
    (`v1.0.0` at the end of Phase 7).
 3. Update `docs/roadmap.md` and the `CLAUDE.md` phase table.
+4. The app version (`package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`) is the
+   version the phase in progress will ship as, `0.<phase>.0`; the About page shows it.
 
 ## Side effects outside the repo
 

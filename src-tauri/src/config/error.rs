@@ -17,4 +17,10 @@ pub enum ConfigError {
     EmptyShortcut,
     #[error("{0}")]
     Rule(String),
+    #[error("could not save {path}: {source}")]
+    Write {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
