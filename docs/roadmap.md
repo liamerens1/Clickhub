@@ -10,13 +10,15 @@ and the PR.
 
 Statuses: **Not started** · **In progress** · **In review** · **Done** · **Parked**.
 
-Reference machine for measurements: RTX 3070 Ti, i7-10700K, 16 GB RAM, two monitors at mixed DPI.
+Reference machine for measurements: RTX 3070 Ti, i7-10700K, 16 GB RAM, two monitors (1920×1080
+and 2560×1440, both at 100% scaling; the main one at ~178 Hz). Mixed-DPI checks need one monitor
+set to another scale temporarily.
 
 ---
 
 ## Phase 0 — Foundation
 
-**Status:** In review
+**Status:** Done (2026-10-19, PR #1, released to `main` as `v0.0.0`)
 
 **Goal:** repo, docs, rules, CI and an empty Tauri tray app. No feature code.
 
@@ -36,7 +38,7 @@ Reference machine for measurements: RTX 3070 Ti, i7-10700K, 16 GB RAM, two monit
 
 ## Phase 1 — Trigger
 
-**Status:** Not started
+**Status:** In progress (branch `feat/trigger/1`; spike on `spike/overlay/1`)
 
 **Goal:** a low-level mouse/keyboard hook on its own thread, a trigger read from the config file
 (hand-edited for now), optional swallowing of the trigger click, a working Pause, and the overlay
@@ -64,6 +66,49 @@ smoothness spike.
     its physical size.
   - The decision goes in this file and in the memory journal **before Phase 2 starts**.
 
+### Overlay spike results (2026-10-19, branch `spike/overlay/1`, not merged)
+
+Setup: a 360×360 transparent, always-on-top, click-through window with
+`WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`, created once and never hidden. A vanilla-TS page holds a
+pre-rendered 8-slice SVG ring that animates only `transform` and `opacity` (open 150 ms with a
+slight overshoot, close 100 ms) plus a simulated hover (class flip). A Rust thread moved the window
+across both monitors and emitted `ring:open` / `ring:close`, 120 cycles per run, 4 runs. Frame
+timing from `requestAnimationFrame` intervals; no synthetic input was sent.
+
+Final run (run 4), reference machine at ~178 Hz (5.6 ms frames):
+
+| Measure                                       | Result                                            | Target          |
+| --------------------------------------------- | ------------------------------------------------- | --------------- |
+| Rust emit → overlay listener                  | p50 0.32 ms, p99 1.28 ms                          | (part of 16 ms) |
+| Rust emit → first frame callback after reveal | p50 0.5 ms, p99 2.3 ms                            | (part of 16 ms) |
+| First reveal after launch                     | 1.9 ms with a startup pre-warm (78–94 ms without) | ≤ 16 ms         |
+| Dropped frames, open + close animations       | **0 of 10,875 frames**                            | 0               |
+| Page visibility while idle-transparent        | `visible` in all 120 samples                      | never throttled |
+| Window resized by a move                      | never                                             | never           |
+
+Hook delivery adds p99 ≈ 0.05 ms (see the latency summary), so trigger → first frame is about
+1–8 ms (≤ 2.3 ms to schedule + up to one 5.6 ms vsync to present), well inside 16 ms.
+
+Findings along the way:
+
+- Runs 2–3 reported ~0.2% "dropped" frames. Every one was interval #0 of the close measurement:
+  Chromium restarting its frame loop after idle, which the open measurement did not include.
+  Measured symmetrically (run 4), there were none. Real mid-animation drops: zero in all runs.
+- The first reveal after launch is a cold start (78–94 ms). An invisible pre-warm reveal at
+  startup (full styling at `opacity: 0.002`) removes it.
+- Tauri's `background_throttling` is unsupported on Windows. It is not needed: a never-hidden,
+  always-on-top window stays `visible`, so WebView2 never throttles it.
+
+**Decision: GO** for the WebView2 overlay (no native Direct2D fallback needed).
+
+**Mixed DPI: not testable on the reference machine.** Both monitors (1920×1080 and 2560×1440) run
+at 100% scaling, so no move ever crossed a DPI boundary. Recommendation for Phase 2: **one
+pre-created overlay per monitor**, each sized once at its own DPI and never moved off its
+monitor. It removes cross-monitor DPI changes by construction instead of fighting
+`WM_DPICHANGED`, at the cost of one extra WebView2 per extra monitor. Phase 2 verifies it by
+temporarily setting one monitor to 125% (done by the user; Claude does not change system
+settings).
+
 ## Phase 2 — Ring
 
 **Status:** Not started
@@ -74,8 +119,10 @@ selection, high-contrast default theme, and basic full-screen auto-disable.
 **Done when:**
 
 - Trigger press to first ring frame is 16 ms or less (measured).
-- Open/hover/select/close run at full refresh rate with no dropped frames on two monitors at mixed
-  DPI (PresentMon).
+- Open/hover/select/close run at full refresh rate with no dropped frames on both monitors
+  (PresentMon), including with one monitor temporarily at 125% scaling.
+- One overlay per monitor, created once at startup and pre-warmed with an invisible reveal; none
+  is ever hidden, resized or moved to another monitor.
 - Hover highlight lands on the same frame the cursor enters a slice.
 - The overlay never takes focus: a "send shortcut" slot reaches the app that was in front.
 - Launch app/file, open URL and send shortcut actions work.
