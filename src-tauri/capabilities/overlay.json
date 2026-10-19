@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "overlay",
+  "description": "The per-monitor overlays: events only, no app commands. Grant only what a phase needs.",
+  "windows": ["overlay-*"],
+  "permissions": ["core:default"]
+}
