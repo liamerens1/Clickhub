@@ -24,7 +24,7 @@ fn create(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let url = WebviewUrl::App(SETTINGS_ENTRY.into());
     let window = WebviewWindowBuilder::new(app, SETTINGS_WINDOW_LABEL, url)
         .title("ClickHub settings")
-        .inner_size(960.0, 640.0)
+        .inner_size(1080.0, 700.0)
         .min_inner_size(640.0, 420.0)
         .center()
         .build()?;
