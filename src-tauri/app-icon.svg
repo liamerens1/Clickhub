@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- ClickHub app icon source. Regenerate src-tauri/icons with: pnpm tauri icon src-tauri/app-icon.svg -->
+  <rect x="32" y="32" width="960" height="960" rx="208" fill="#111111"/>
+  <g fill="none" stroke-width="96" stroke-linecap="butt">
+    <circle cx="512" cy="512" r="300" stroke="#ffffff" stroke-dasharray="371 100" transform="rotate(-81 512 512)"/>
+  </g>
+  <circle cx="512" cy="512" r="92" fill="#ffcc00"/>
+</svg>
