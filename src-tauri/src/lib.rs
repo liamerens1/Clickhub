@@ -5,6 +5,7 @@
 
 mod app;
 pub mod config;
+pub mod core;
 mod settings;
 pub mod tray;
 
