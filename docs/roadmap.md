@@ -160,7 +160,12 @@ the centre cancels. Swallowing is on by default from this phase.
 
 ## Phase 3 — Settings UI
 
-**Status:** In progress (branch `feat/settings/3`)
+**Status:** Done (2026-10-19, PR #7; release PR #8 to `main` as `v0.3.0`). Live-tested by the
+user: the settings flows, the keyboard-chord trigger and "send shortcut" landing in Notepad.
+Carried into Phase 4 as explicit checks (the user chose to release now): fail-open with
+swallowing on (stalled core), one monitor at 125%, the reduced-motion fade, the ink colour flicker
+check, a 1-hour run, and a frame-rate measurement inside the real settings window (so far
+measured in headless Edge: 0 slow frames of 720 with 60 rows).
 
 **Goal:** ring editor, trigger picker ("press the button you want"), persistence.
 
@@ -190,9 +195,22 @@ panels, rows, buttons and sidebar items; no hard borders), following Windows lig
 
 ## Phase 4 — Lifecycle
 
-**Status:** Not started
+**Status:** In progress (branch `feat/lifecycle/4`)
 
 **Goal:** installer, autostart, uninstall, updater.
+
+**Design (chosen by the user 2026-10-19):**
+
+- **Updates:** checked quietly at startup and once a day against GitHub Releases. A newer
+  version shows a tray notification and a banner in settings with Install; nothing installs
+  without the user's click. About also has Check now.
+- **Autostart:** on by default for an installed copy (applied once, on its first run); a switch
+  in General turns it off. Builds run from the repo never register themselves.
+- **Releases:** pushing a `v*` tag runs a GitHub Actions workflow that builds the NSIS installer
+  on `windows-latest`, signs the update files with the updater key (a GitHub secret, created only
+  after the user approves) and creates a draft GitHub Release that the user publishes.
+- **Uninstall:** the settings button asks first, then starts the normal uninstaller and quits
+  ClickHub so it can remove the files.
 
 **Done when:**
 
@@ -204,6 +222,7 @@ panels, rows, buttons and sidebar items; no hard borders), following Windows lig
 - The update check works against a test release. This needs an updater signing key stored as a
   GitHub secret, which is created only after explicit approval. Releases stay unsigned
   (SmartScreen warning documented).
+- The Phase 3 checks carried over above are run and recorded.
 
 ## Phase 5 — Profiles
 
