@@ -1,7 +1,7 @@
 use clickhub_lib::core::{BASE_BACKOFF_MS, MAX_BACKOFF_MS, MISSED_INPUT_MS, WatchdogPolicy};
 
-/// Polls are 200 ms apart in the real watchdog.
-const POLL_MS: u64 = 200;
+/// Polls are 100 ms apart in the real watchdog.
+const POLL_MS: u64 = 100;
 
 /// Two consecutive polls with the same view of input, as a persistent loss looks.
 fn poll_twice(policy: &mut WatchdogPolicy, now_ms: u64, last_input: u32, hook_last: u32) -> bool {
