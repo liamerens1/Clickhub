@@ -63,20 +63,22 @@ app ever sees a lone half of a click. Injected (synthetic) input is never matche
 ### Watchdog: detecting a silently removed hook
 
 Windows silently removes a low-level hook whose callback exceeds `LowLevelHooksTimeout`, without
-telling the app; the only symptom is that events stop arriving. The watchdog polls every 200 ms
+telling the app; the only symptom is that events stop arriving. The watchdog polls every 100 ms
 and compares `GetLastInputInfo` (the newest input Windows saw in the session, from any device) with
 the newest event either hook saw. If Windows saw input the hooks missed by more than 250 ms on
 **two consecutive polls**, it asks the hook thread to re-install, so a real loss is repaired within
-about 0.7 s. The second poll filters out a callback that merely ran late under heavy CPU load and
-then caught up, which a one-poll check mistook for a loss during the first live run (while a Rust
-build saturated the CPU). The hook thread also runs at `THREAD_PRIORITY_HIGHEST`: it is idle
-except for callbacks, and starvation is exactly what makes Windows drop hooks. No synthetic input is needed. The keyboard hook exists mainly
-for this: without it, typing would look like missed mouse input.
+about 0.5 s of the next input. The second poll filters out a callback that merely ran late under
+heavy CPU load and then caught up, which a one-poll check mistook for a loss during the first live
+run (while a Rust build saturated the CPU). The hook thread also runs at
+`THREAD_PRIORITY_HIGHEST`: it is idle except for callbacks, and starvation is exactly what makes
+Windows drop hooks. No synthetic input is needed. The keyboard hook exists mainly for this:
+without it, typing would look like missed mouse input.
 
 Re-installing cannot help when the input went to an elevated window (UIPI hides it from our
 hooks), so repeated re-installs back off exponentially (2 s, doubling, max 30 s) until hook events
-resume. The decision logic is pure (`core::WatchdogPolicy`) and unit-tested, including tick
-wraparound.
+resume. Every re-install logs the foreground app's executable, PID and elevation
+(`platform::foreground_app`), so a log line tells a real drop apart from input to an admin window.
+The decision logic is pure (`core::WatchdogPolicy`) and unit-tested, including tick wraparound.
 
 ## The hot path
 
@@ -155,18 +157,18 @@ at 125%.
 
 ## Rust module map (`src-tauri/src/`)
 
-| Module      | Role                                                                                                                                 | Status             |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| `lib.rs`    | Declares modules, re-exports `run`. No logic.                                                                                        | now                |
-| `app/`      | Startup, file logging, the event pipeline, the runtime that owns background threads, shutdown.                                       | now                |
-| `tray/`     | Tray icon and menu; maps clicks to actions and shows status (Pause/Resume, tooltip).                                                 | now                |
-| `settings/` | Settings window lifecycle (create, reveal, hide-on-close).                                                                           | now                |
-| `config/`   | Config schema, parsing, validation, load with last-good fallback and backup of broken files.                                         | now                |
-| `hook/`     | The only place with Win32 hook code. Hook thread, callbacks, shared atomics, watchdog thread.                                        | now                |
-| `core/`     | Trigger matching, press tracking, latency stats, watchdog policy; later profiles and actions. Pure logic.                            | now                |
-| `platform/` | Thin safe wrappers over other Win32: clocks, input state; later window styles, monitors, DPI, foreground app, full-screen detection. | now (clocks, keys) |
-| `overlay/`  | Overlay window lifecycle: create once, move, reveal.                                                                                 | Phase 2            |
-| `ipc/`      | Tauri commands and event names. Validates payloads, delegates.                                                                       | Phase 2–3          |
+| Module      | Role                                                                                                                                               | Status                         |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `lib.rs`    | Declares modules, re-exports `run`. No logic.                                                                                                      | now                            |
+| `app/`      | Startup, file logging, the event pipeline, the runtime that owns background threads, shutdown.                                                     | now                            |
+| `tray/`     | Tray icon and menu; maps clicks to actions and shows status (Pause/Resume, tooltip).                                                               | now                            |
+| `settings/` | Settings window lifecycle (create, reveal, hide-on-close).                                                                                         | now                            |
+| `config/`   | Config schema, parsing, validation, load with last-good fallback and backup of broken files.                                                       | now                            |
+| `hook/`     | The only place with Win32 hook code. Hook thread, callbacks, shared atomics, watchdog thread.                                                      | now                            |
+| `core/`     | Trigger matching, press tracking, latency stats, watchdog policy; later profiles and actions. Pure logic.                                          | now                            |
+| `platform/` | Thin safe wrappers over other Win32: clocks, input state, foreground app and elevation; later window styles, monitors, DPI, full-screen detection. | now (clocks, keys, foreground) |
+| `overlay/`  | Overlay window lifecycle: create once, move, reveal.                                                                                               | Phase 2                        |
+| `ipc/`      | Tauri commands and event names. Validates payloads, delegates.                                                                                     | Phase 2–3                      |
 
 `unsafe` is denied crate-wide. `hook/` and `platform/` opt back in with `#![allow(unsafe_code)]`.
 That keeps every unsafe block in two reviewable places.

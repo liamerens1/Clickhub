@@ -5,9 +5,10 @@ use std::time::Duration;
 
 use super::shared::SHARED;
 use crate::core::WatchdogPolicy;
-use crate::platform::{last_input_tick, tick_count_64};
+use crate::platform::{foreground_app, last_input_tick, tick_count_64};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(200);
+/// With two-poll confirmation, a lost hook is repaired within about 0.5 s of the next input.
+const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Background thread that re-installs the hooks when Windows silently drops them.
 /// See [`WatchdogPolicy`] for how loss is detected.
@@ -65,10 +66,16 @@ fn run(stop: &AtomicBool, reinstall: &dyn Fn()) {
         let hook_last = SHARED.last_hook_tick();
         if policy.should_reinstall(tick_count_64(), last_input, hook_last) {
             reinstalls += 1;
+            // Diagnostics: input to an elevated window is invisible to our hooks (UIPI), so
+            // knowing the foreground app tells a real drop apart from that.
+            let foreground = foreground_app();
             tracing::warn!(
                 reinstalls,
                 missed_ms = last_input.wrapping_sub(hook_last),
                 next_backoff_ms = policy.backoff_ms(),
+                foreground_exe = foreground.as_ref().and_then(|app| app.exe.as_deref()),
+                foreground_pid = foreground.as_ref().map(|app| app.pid),
+                foreground_elevated = ?foreground.as_ref().map(|app| app.elevated),
                 "hooks missed input; re-installing"
             );
             reinstall();
