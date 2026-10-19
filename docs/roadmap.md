@@ -201,13 +201,17 @@ the centre cancels. Swallowing is on by default from this phase.
 **Status:** Not started
 
 **Goal:** the remaining action types (type text, run command, media/volume), marking and turbo
-interaction modes, and themes.
+interaction modes, and selectable ring themes.
 
 **Done when:**
 
 - Each action type has an automated test and a manual check.
 - Marking mode selects a slot by gesture without stopping the cursor; turbo mode selects on
   release of the held trigger.
+- **Theme presets for the ring** (requested 2026-10-19): the user picks one of several built-in
+  presets in settings, e.g. the current plain spokes, plus variants with different line styles,
+  label weights, sizes or accent colours. The choice is saved in `config.json`, switches without
+  a restart, and every preset keeps the smoothness targets and the automatic light/dark ink.
 - Built-in themes meet WCAG AA contrast on both light and dark backgrounds.
 
 ## Phase 7 — v1

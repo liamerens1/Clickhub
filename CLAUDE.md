@@ -143,7 +143,7 @@ Fix formatting with `pnpm format` and `cargo fmt`.
 | 3 — Settings UI     | Ring editor, trigger picker, persistence                    | Not started |
 | 4 — Lifecycle       | Installer, autostart, uninstall, updater                    | Not started |
 | 5 — Profiles        | Per-app rings, nested sub-rings, per-app blocklist          | Not started |
-| 6 — Actions & modes | Remaining actions, marking/turbo modes, themes              | Not started |
+| 6 — Actions & modes | Remaining actions, marking/turbo modes, theme presets       | Not started |
 | 7 — v1              | Hardening and release                                       | Not started |
 | Parked              | Haptics, plugin marketplace, macOS/Linux, code signing      | Parked      |
 
