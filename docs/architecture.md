@@ -31,6 +31,7 @@ One process. Its threads and windows:
  ├─ clickhub-actions: runs fired slot actions                 (now)
  ├─ clickhub-watchdog: re-installs dropped hooks              (now)
  ├─ clickhub-fullscreen: suppresses the trigger in games      (now)
+ ├─ clickhub-updates: daily update check (installed copy)     (now)
  └─ WebView2 browser/renderer processes (child processes owned by WebView2)
 ```
 
@@ -228,21 +229,60 @@ Monitors connected after startup get no overlay until restart (Phase 7 handles h
   list with 60 rows; the same URL without `perf` runs the whole page in a plain browser against an
   in-memory mock of the commands (`src/shared/ipc/dev-mock.ts`, never in a build).
 
+## Installing, starting with Windows, updating, uninstalling
+
+The `lifecycle/` module, all off the hot path. An **installed copy** is one with `uninstall.exe`
+beside the exe (the NSIS installer puts it there); a build run from the repo is never registered,
+never auto-checks for updates and cannot uninstall itself.
+
+- **Installer:** Tauri's NSIS bundle, `installMode: currentUser` (installs under the user's
+  profile, no admin prompt). `src-tauri/windows/hooks.nsh` adds one uninstall step (below).
+- **Start with Windows:** a `REG_SZ` value `ClickHub` = `"<exe>" --autostart` in
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, written by `platform::set_run_entry` (our
+  own small wrapper: `tauri-plugin-autostart` tries the machine-wide key first and writes the path
+  unquoted). "On" also clears Task Manager's "disabled" record in `...\StartupApproved\Run`; "is
+  it on" means the value exists and Task Manager has not switched it off. On the **first run** of
+  an installed copy it is switched on (the chosen default) and a marker file
+  `%LOCALAPPDATA%\com.liamerens.clickhub\autostart-default-applied` makes sure that never
+  happens again; after that only the user decides (General page). The value name must equal
+  `productName`: Tauri's uninstaller deletes `Run\ClickHub` itself (except during updates), and
+  the hook also deletes the `StartupApproved` record.
+- **Uninstall:** the settings button asks first, then `lifecycle::launch_uninstaller` starts
+  `uninstall.exe` and ClickHub exits so its files can be removed. The uninstaller's "Delete the
+  application data" box (unticked by default) decides whether `%APPDATA%\com.liamerens.clickhub`
+  (config) and `%LOCALAPPDATA%\com.liamerens.clickhub` (logs, marker) go too.
+- **Updates:** `tauri-plugin-updater` against
+  `https://github.com/liamerens1/Clickhub/releases/latest/download/latest.json`, which GitHub
+  serves from the newest **published, non-pre-release** release. An installed copy checks 30 s
+  after startup and then every 24 h on the `clickhub-updates` thread; the user can also Check now
+  in About. A newer version shows a Windows notification (once per version) and a banner in
+  settings; **nothing installs without a click**. Install downloads the installer, verifies its
+  minisign signature against the public key in `tauri.conf.json` (`requireSignedVersion` also
+  ties the signature to the announced version, so an old signed installer cannot be passed off
+  as new), stops ClickHub's threads, runs the installer in passive mode and lets it restart
+  ClickHub. `CLICKHUB_UPDATE_ENDPOINT=<https url of a latest.json>` points a copy at another
+  manifest (used to test against a pre-release); the signature check still applies.
+- **Releases:** see `docs/releasing.md`. A `v*` tag runs `.github/workflows/release.yml`, which
+  builds the installer, signs the update files with the updater key (GitHub secrets), writes
+  `latest.json` with `scripts/release-manifest.ts` and creates a **draft** release that a person
+  publishes. Installers are not code-signed, so SmartScreen warns on first run.
+
 ## Rust module map (`src-tauri/src/`)
 
-| Module      | Role                                                                                                                                              | Status |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
-| `lib.rs`    | Declares modules, re-exports `run`. No logic.                                                                                                     | now    |
-| `app/`      | Startup, file logging, the event pipeline, the runtime that owns background threads, shutdown.                                                    | now    |
-| `tray/`     | Tray icon and menu; maps clicks to actions and shows status (Pause/Resume, tooltip).                                                              | now    |
-| `settings/` | Settings window lifecycle (create, reveal, hide-on-close).                                                                                        | now    |
-| `config/`   | Config schema, parsing, validation, load with last-good fallback and backup of broken files.                                                      | now    |
-| `hook/`     | The only place with Win32 hook code. Hook thread, callbacks, shared atomics, watchdog thread.                                                     | now    |
-| `core/`     | Trigger matching, press tracking, ring aim and tap/hold session, latency stats, watchdog policy. Pure logic.                                      | now    |
-| `platform/` | Thin safe wrappers over other Win32: clocks, input state, `SendInput`, `ShellExecuteW`, foreground app and elevation, full-screen, window styles. | now    |
-| `overlay/`  | One overlay window per monitor: create once, move within its monitor, emit ring events, log frame latency.                                        | now    |
-| `actions/`  | Runs fired slot actions on a dedicated thread through `platform/`.                                                                                | now    |
-| `ipc/`      | Tauri commands for the settings window and the events sent to it. Validates payloads, delegates.                                                  | now    |
+| Module       | Role                                                                                                                                              | Status |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| `lib.rs`     | Declares modules, re-exports `run`. No logic.                                                                                                     | now    |
+| `app/`       | Startup, file logging, the event pipeline, the runtime that owns background threads, shutdown.                                                    | now    |
+| `tray/`      | Tray icon and menu; maps clicks to actions and shows status (Pause/Resume, tooltip).                                                              | now    |
+| `settings/`  | Settings window lifecycle (create, reveal, hide-on-close).                                                                                        | now    |
+| `config/`    | Config schema, parsing, validation, load with last-good fallback and backup of broken files.                                                      | now    |
+| `hook/`      | The only place with Win32 hook code. Hook thread, callbacks, shared atomics, watchdog thread.                                                     | now    |
+| `core/`      | Trigger matching, press tracking, ring aim and tap/hold session, latency stats, watchdog policy. Pure logic.                                      | now    |
+| `platform/`  | Thin safe wrappers over other Win32: clocks, input state, `SendInput`, `ShellExecuteW`, foreground app and elevation, full-screen, window styles. | now    |
+| `overlay/`   | One overlay window per monitor: create once, move within its monitor, emit ring events, log frame latency.                                        | now    |
+| `actions/`   | Runs fired slot actions on a dedicated thread through `platform/`.                                                                                | now    |
+| `ipc/`       | Tauri commands for the settings window and the events sent to it. Validates payloads, delegates.                                                  | now    |
+| `lifecycle/` | Start with Windows, update checks and installs, launching the uninstaller. Installed copies only.                                                 | now    |
 
 `unsafe` is denied crate-wide. `hook/` and `platform/` opt back in with `#![allow(unsafe_code)]`.
 That keeps every unsafe block in two reviewable places.
