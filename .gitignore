@@ -22,3 +22,7 @@ Thumbs.db
 
 # Local measurement tools (PresentMon). Never committed.
 .tools/
+
+# Project docs and agent rules. Kept locally, not committed.
+CLAUDE.md
+docs/
