@@ -76,6 +76,8 @@ pub struct AppStatus {
 #[serde(rename_all = "camelCase")]
 pub struct AppInfo {
     pub version: String,
+    /// Installed with the installer (so it can start with Windows, update and uninstall).
+    pub installed: bool,
     pub config_path: String,
     pub log_dir: Option<String>,
 }

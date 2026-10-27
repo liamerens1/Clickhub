@@ -17,7 +17,9 @@ import { RingPage } from "./ring-page";
 import { SaveStatus } from "./save-status";
 import { type Section, Sidebar } from "./sidebar";
 import { TriggerPage } from "./trigger-page";
+import { UpdateBanner } from "./update-banner";
 import { useConfigStore } from "./use-config-store";
+import { useUpdates } from "./use-updates";
 
 const HEADINGS: Record<Section, { title: string; description: string }> = {
   ring: {
@@ -26,7 +28,7 @@ const HEADINGS: Record<Section, { title: string; description: string }> = {
   },
   trigger: { title: "Trigger", description: "What opens the ring." },
   general: { title: "General", description: "How ClickHub runs." },
-  about: { title: "About", description: "Version and things worth knowing." },
+  about: { title: "About", description: "Version, updates and things worth knowing." },
 };
 
 /** True when Ctrl+Z should undo a settings change rather than undo typing in a text box. */
@@ -39,6 +41,7 @@ function isUndoShortcut(event: KeyboardEvent): boolean {
 /** Root of the settings window: the section sidebar and the selected page. */
 export function App() {
   const store = useConfigStore();
+  const updates = useUpdates();
   const [section, setSection] = useState<Section>("ring");
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [info, setInfo] = useState<AppInfo | null>(null);
@@ -97,7 +100,7 @@ export function App() {
       />
     );
   } else {
-    page = <AboutPage info={info} />;
+    page = <AboutPage info={info} updates={updates} />;
   }
 
   return (
@@ -124,6 +127,7 @@ export function App() {
               </button>
             </div>
           </header>
+          <UpdateBanner updates={updates} />
           {store.snapshot?.problem != null && (
             <ConfigProblemBanner problem={store.snapshot.problem} onReload={store.reload} />
           )}

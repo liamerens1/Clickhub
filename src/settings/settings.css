@@ -881,3 +881,89 @@ button.chip[aria-pressed="true"] {
     opacity: 0;
   }
 }
+
+/* ---------- Updates and dialogs ---------- */
+
+.banner-info {
+  background: var(--ch-accent-soft);
+  color: var(--ch-fg);
+}
+
+.progress {
+  overflow: hidden;
+  height: 4px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: var(--ch-chip);
+}
+
+.progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ch-accent);
+  transform-origin: left;
+  transition: transform 200ms var(--ch-ease);
+}
+
+.dialog-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.32);
+  animation: fade-in 140ms linear;
+}
+
+.dialog {
+  width: min(440px, 100%);
+  padding: 22px 22px 18px;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-lg);
+  background: var(--ch-surface-raised);
+  box-shadow: var(--ch-shadow);
+  animation: popover-in 160ms var(--ch-ease);
+}
+
+.dialog-title {
+  margin: 0 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.dialog-body {
+  color: var(--ch-muted);
+}
+
+.dialog-body p {
+  margin: 0 0 8px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.btn-danger-solid {
+  border-color: transparent;
+  background: var(--ch-danger);
+  color: var(--ch-accent-fg);
+}
+
+.btn-danger-solid:hover:not(:disabled) {
+  background: var(--ch-danger);
+  opacity: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar {
+    transition: none;
+  }
+
+  .dialog {
+    animation: fade-in 120ms linear;
+  }
+}

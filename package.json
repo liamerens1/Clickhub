@@ -1,7 +1,7 @@
 {
   "name": "clickhub",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "ClickHub: a configurable radial control center for Windows",
   "type": "module",
   "packageManager": "pnpm@11.28.6",
