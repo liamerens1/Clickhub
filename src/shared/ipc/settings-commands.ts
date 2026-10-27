@@ -29,10 +29,31 @@ export const appStatusSchema = z.object({
 
 export const appInfoSchema = z.object({
   version: z.string(),
+  /** Installed with the installer (so it can start with Windows, update and uninstall). */
+  installed: z.boolean(),
   configPath: z.string(),
   logDir: z.string().nullable(),
 });
 
+export const autostartSchema = z.object({ available: z.boolean(), enabled: z.boolean() });
+
+/** Mirrors `UpdateState` in `src-tauri/src/lifecycle/updates.rs`. */
+export const updateStateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("idle") }),
+  z.object({ kind: z.literal("checking") }),
+  z.object({ kind: z.literal("upToDate"), checkedAtMs: z.number() }),
+  z.object({ kind: z.literal("available"), version: z.string(), notes: z.string().nullable() }),
+  z.object({
+    kind: z.literal("downloading"),
+    downloaded: z.number(),
+    total: z.number().nullable(),
+  }),
+  z.object({ kind: z.literal("installing") }),
+  z.object({ kind: z.literal("failed"), error: z.string() }),
+]);
+
+export type Autostart = z.infer<typeof autostartSchema>;
+export type UpdateState = z.infer<typeof updateStateSchema>;
 export type ConfigSnapshot = z.infer<typeof configSnapshotSchema>;
 export type AppStatus = z.infer<typeof appStatusSchema>;
 export type AppInfo = z.infer<typeof appInfoSchema>;
@@ -69,11 +90,32 @@ export const setTriggerCapture = (capturing: boolean) =>
 export const pickFile = () => call("pick_file", z.string().nullable());
 export const openFolder = (folder: Folder) => call("open_folder", z.null(), { folder });
 export const getAppInfo = () => call("get_app_info", appInfoSchema);
+export const getAutostart = () => call("get_autostart", autostartSchema);
+export const setAutostart = (enabled: boolean) =>
+  call("set_autostart", autostartSchema, { enabled });
+export const getUpdateState = () => call("get_update_state", updateStateSchema);
+export const checkForUpdates = () => call("check_for_updates", updateStateSchema);
+/** On success ClickHub exits and the installer restarts it, so this may never resolve. */
+export const installUpdate = () => call("install_update", z.null());
+/** Starts the uninstaller and quits ClickHub. Ask the user first. */
+export const uninstall = () => call("uninstall", z.null());
 
 /** The running config changed (saved here, or reloaded from the tray). */
 export function onConfigChanged(handler: () => void): Promise<UnlistenFn> {
   return getCurrentWebviewWindow().listen<unknown>("config:changed", () => {
     handler();
+  });
+}
+
+/** Update checking or installing moved on. */
+export function onUpdateChanged(handler: (state: UpdateState) => void): Promise<UnlistenFn> {
+  return getCurrentWebviewWindow().listen<unknown>("update:changed", ({ payload }) => {
+    const result = updateStateSchema.safeParse(payload);
+    if (result.success) {
+      handler(result.data);
+    } else {
+      console.error("ClickHub settings: ignoring malformed update:changed", result.error.issues);
+    }
   });
 }
 

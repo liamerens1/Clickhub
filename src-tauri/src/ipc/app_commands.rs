@@ -3,6 +3,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use super::payload::{AppInfo, AppStatus, Folder};
 use crate::app::Runtime;
+use crate::lifecycle;
 use crate::platform;
 
 #[tauri::command]
@@ -89,6 +90,7 @@ pub fn open_folder(
 pub fn get_app_info(app: AppHandle, runtime: State<'_, Runtime>) -> AppInfo {
     AppInfo {
         version: app.package_info().version.to_string(),
+        installed: lifecycle::installed_exe().is_some(),
         config_path: runtime.config_path().display().to_string(),
         log_dir: app
             .path()

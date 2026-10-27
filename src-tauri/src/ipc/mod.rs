@@ -7,6 +7,7 @@
 pub(crate) mod app_commands;
 pub(crate) mod config_commands;
 mod events;
+pub(crate) mod lifecycle_commands;
 mod payload;
 
-pub(crate) use events::{emit_config_changed, emit_status_changed};
+pub(crate) use events::{emit_config_changed, emit_status_changed, emit_update_changed};
