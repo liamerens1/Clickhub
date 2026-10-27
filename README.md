@@ -10,7 +10,8 @@ at the cursor. Aim at one and release (or click) to fire it.
 - **Stays out of the way:** never takes focus, turns itself off in full-screen apps and games,
   and lets your clicks through if anything goes wrong.
 
-> **Status:** early development (Phase 3 of 7, settings window). Expect rough edges.
+> **Status:** early development (Phase 4 of 7: installer, start with Windows and updates).
+> Expect rough edges.
 
 ## Download
 
@@ -79,8 +80,8 @@ file next to it, and tells you what is wrong. Logs are in
 | 0 — Foundation      | Repo, rules, CI, empty tray app                              | Done        |
 | 1 — Trigger         | Low-level hook thread, configurable button                   | Done        |
 | 2 — Ring            | Ring at the cursor, static actions, full-screen auto-disable | Done        |
-| 3 — Settings UI     | Ring editor, trigger picker, saving                          | In progress |
-| 4 — Lifecycle       | Installer, start on login, uninstall, updater                | Not started |
+| 3 — Settings UI     | Ring editor, trigger picker, saving                          | Done        |
+| 4 — Lifecycle       | Installer, start on login, uninstall, updater                | In progress |
 | 5 — Profiles        | Per-app rings, nested sub-rings, per-app blocklist           | Not started |
 | 6 — Actions & modes | More actions, marking/turbo modes, themes, two-tier branches | Not started |
 | 7 — v1              | Hardening and release                                        | Not started |

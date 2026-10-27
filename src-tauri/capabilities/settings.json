@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
-  "description": "The settings window: events plus the app's own commands (read and save config, pause, trigger capture, file picker, open folders).",
+  "description": "The settings window: events plus the app's own commands (read and save config, pause, trigger capture, file picker, open folders, start with Windows, updates, uninstall).",
   "windows": ["settings"],
   "permissions": [
     "core:default",
@@ -13,6 +13,12 @@
     "allow-set-trigger-capture",
     "allow-pick-file",
     "allow-open-folder",
-    "allow-get-app-info"
+    "allow-get-app-info",
+    "allow-get-autostart",
+    "allow-set-autostart",
+    "allow-get-update-state",
+    "allow-check-for-updates",
+    "allow-install-update",
+    "allow-uninstall"
   ]
 }

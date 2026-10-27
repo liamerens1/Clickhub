@@ -9,6 +9,7 @@ pub mod config;
 pub mod core;
 mod hook;
 mod ipc;
+mod lifecycle;
 mod overlay;
 mod platform;
 mod settings;
