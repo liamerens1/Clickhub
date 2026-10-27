@@ -1,4 +1,13 @@
-import { type AppInfo, type AppStatus, openFolder } from "../shared/ipc";
+import { useEffect, useState } from "react";
+
+import {
+  type AppInfo,
+  type AppStatus,
+  type Autostart,
+  getAutostart,
+  openFolder,
+  setAutostart,
+} from "../shared/ipc";
 
 import { Icon } from "./icon";
 import { Switch } from "./switch";
@@ -9,8 +18,18 @@ interface GeneralPageProps {
   onPause: (paused: boolean) => void;
 }
 
-/** How ClickHub runs: pause, where its files live. */
+/** How ClickHub runs: pause, starting with Windows, where its files live. */
 export function GeneralPage({ status, info, onPause }: GeneralPageProps) {
+  const [autostart, setAutostartState] = useState<Autostart | null>(null);
+  const [autostartError, setAutostartError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void getAutostart().then((result) => {
+      if (result.ok) setAutostartState(result.value);
+      else setAutostartError(result.error);
+    });
+  }, []);
+
   return (
     <div className="tiles">
       <div className="tile">
@@ -45,10 +64,28 @@ export function GeneralPage({ status, info, onPause }: GeneralPageProps) {
       <div className="tile">
         <div className="tile-text">
           <span className="tile-title">Start with Windows</span>
-          <span className="tile-hint">Arrives with the installer.</span>
+          <span className="tile-hint">
+            {autostart?.available === false
+              ? "Only the installed copy of ClickHub can start with Windows."
+              : "ClickHub starts in the tray when you sign in."}
+          </span>
+          {autostartError !== null && <span className="field-error">{autostartError}</span>}
         </div>
-        <span className="chip">Phase 4</span>
-        <Switch label="Start with Windows" checked={false} disabled onChange={() => undefined} />
+        <Switch
+          label="Start with Windows"
+          checked={autostart?.enabled ?? false}
+          disabled={autostart?.available !== true}
+          onChange={(enabled) => {
+            void setAutostart(enabled).then((result) => {
+              if (result.ok) {
+                setAutostartState(result.value);
+                setAutostartError(null);
+              } else {
+                setAutostartError(result.error);
+              }
+            });
+          }}
+        />
       </div>
 
       <h2 className="section-label">Files</h2>

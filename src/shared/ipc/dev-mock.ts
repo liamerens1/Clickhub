@@ -7,12 +7,14 @@ import { type Config, configSchema } from "../schema";
  * plain browser (`pnpm dev`, then http://localhost:1420/settings/). Never part of a build:
  * `settings/main.tsx` imports it dynamically behind `import.meta.env.DEV`.
  *
- * Query options: `?problem` shows the broken-config banner, `?fail` makes every save fail.
+ * Query options: `?problem` shows the broken-config banner, `?fail` makes every save fail,
+ * `?installed` acts as an installed copy, `?update` makes Check now find version 9.9.9.
  */
 export function installDevMock(): void {
   const params = new URLSearchParams(window.location.search);
   let config: Config = configSchema.parse({ version: 1 });
   let paused = false;
+  let autostart = params.has("installed");
   const problem = params.has("problem")
     ? {
         error: "config is not valid: unknown field `slot`, expected `slots` at line 4 column 11",
@@ -45,12 +47,25 @@ export function installDevMock(): void {
           return { paused, problem: null };
         case "set_trigger_capture":
         case "open_folder":
+        case "install_update":
+        case "uninstall":
           return null;
+        case "get_autostart":
+        case "set_autostart":
+          if (command === "set_autostart") autostart = args["enabled"] === true;
+          return { available: params.has("installed"), enabled: autostart };
+        case "get_update_state":
+          return { kind: "idle" };
+        case "check_for_updates":
+          return params.has("update")
+            ? { kind: "available", version: "9.9.9", notes: null }
+            : { kind: "upToDate", checkedAtMs: Date.now() };
         case "pick_file":
           return "C:\\Windows\\System32\\notepad.exe";
         case "get_app_info":
           return {
-            version: "0.3.0",
+            version: "0.4.0",
+            installed: params.has("installed"),
             configPath: path,
             logDir: "C:\\Users\\you\\AppData\\Local\\com.liamerens.clickhub\\logs",
           };

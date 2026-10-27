@@ -11,6 +11,12 @@ const COMMANDS: &[&str] = &[
     "pick_file",
     "open_folder",
     "get_app_info",
+    "get_autostart",
+    "set_autostart",
+    "get_update_state",
+    "check_for_updates",
+    "install_update",
+    "uninstall",
 ];
 
 fn main() {

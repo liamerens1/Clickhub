@@ -4,6 +4,7 @@ use tauri::{App, AppHandle, Manager, RunEvent};
 
 use super::runtime::Runtime;
 use crate::ipc;
+use crate::lifecycle::{self, Updates};
 use crate::overlay::{Overlays, RingView};
 use crate::settings;
 use crate::tray::{self, MenuAction};
@@ -32,6 +33,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             ipc::config_commands::get_config,
             ipc::config_commands::save_config,
@@ -42,6 +44,12 @@ pub fn run() {
             ipc::app_commands::pick_file,
             ipc::app_commands::open_folder,
             ipc::app_commands::get_app_info,
+            ipc::lifecycle_commands::get_autostart,
+            ipc::lifecycle_commands::set_autostart,
+            ipc::lifecycle_commands::get_update_state,
+            ipc::lifecycle_commands::check_for_updates,
+            ipc::lifecycle_commands::install_update,
+            ipc::lifecycle_commands::uninstall,
         ])
         .setup(setup)
         .build(context);
@@ -69,6 +77,12 @@ fn setup(app: &mut App) -> Result<(), Box<dyn std::error::Error>> {
     let overlays = Overlays::create(app.handle(), RingView { slots: Vec::new() })?;
     let runtime = Runtime::start(app.handle(), overlays)?;
     app.manage(runtime);
+    // An installed copy starts with Windows by default (applied once), and checks for updates.
+    match app.path().app_local_data_dir() {
+        Ok(state_dir) => lifecycle::apply_autostart_default(&state_dir),
+        Err(error) => tracing::warn!(%error, "no local data folder; autostart default not applied"),
+    }
+    Updates::start(app.handle());
     // No window is shown until the user opens settings; the overlays are transparent.
     tracing::info!(show_debug_items, "tray ready");
     Ok(())
